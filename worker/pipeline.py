@@ -258,64 +258,146 @@ def load_policies(cfg_dir: pathlib.Path) -> dict:
     return {}
 
 def load_ner():
+    """
+    Load and configure the German language model with enhanced processing.
+    
+    Returns:
+        spaCy language model with German language support or None if loading fails
+    """
     if not HAS_SPACY:
         logger.warning("spaCy not available, NER functionality disabled")
         return None
+        
     try:
-        logger.info("Loading spaCy German language model...")
+        logger.info("Loading and configuring German language model...")
         logger.info(f"Using spaCy cache directory: {os.environ.get('SPACY_DATA')}")
         
         # Try to load from cache first
         try:
-            nlp = spacy.load("de_core_news_lg")
-            logger.info("German NER model loaded successfully from cache")
+            # Load the model with optimized settings
+            nlp = spacy.load(
+                "de_core_news_lg",
+                disable=["parser", "textcat"]  # Disable unused components for efficiency
+            )
+            
+            # Add custom German stopwords
+            custom_stopwords = {
+                'eigentlich', 'irgendwie', 'halt', 'eben', 'mal', 'ja',
+                'schon', 'doch', 'auch', 'nur', 'denn', 'etwa', 'etwas',
+                'gar', 'gern', 'irgendwas', 'irgendwo', 'man', 'na',
+                'nämlich', 'nun', 'sehr', 'vielleicht', 'viel', 'vom',
+                'überhaupt', 'weiter', 'wieder', 'wirklich', 'zu', 'zurück'
+            }
+            
+            # Add custom stopwords to the default set
+            for word in custom_stopwords:
+                nlp.Defaults.stop_words.add(word)
+                nlp.vocab[word].is_stop = True
+            
+            # Configure the pipeline for better German processing
+            if 'sentencizer' not in nlp.pipe_names:
+                nlp.add_pipe('sentencizer')
+            
+            logger.info("German language model loaded and configured successfully")
             return nlp
+            
         except OSError as e:
             logger.info(f"Model not found in cache, downloading... {e}")
             # Download the model
-            import subprocess
-            result = subprocess.run([
-                sys.executable, "-m", "spacy", "download", "de_core_news_lg"
-            ], capture_output=True, text=True)
-            if result.returncode == 0:
-                nlp = spacy.load("de_core_news_lg")
-                logger.info("German NER model downloaded and loaded successfully")
-                return nlp
-            else:
-                logger.error(f"Failed to download spaCy model: {result.stderr}")
+            try:
+                import subprocess
+                result = subprocess.run(
+                    [sys.executable, "-m", "spacy", "download", "de_core_news_lg"],
+                    capture_output=True, 
+                    text=True
+                )
+                if result.returncode == 0:
+                    nlp = spacy.load("de_core_news_lg", disable=["parser", "textcat"])
+                    logger.info("German language model downloaded and loaded successfully")
+                    return nlp
+                else:
+                    logger.error(f"Failed to download spaCy model: {result.stderr}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error downloading spaCy model: {e}")
                 return None
                 
     except Exception as e:
-        logger.error(f"Failed to load German NER model: {e}")
+        logger.error(f"Failed to load German language model: {e}")
         return None
 
 def load_sentiment():
+    """
+    Load and configure the German sentiment analysis model with enhanced processing.
+    
+    Returns:
+        Hugging Face pipeline for sentiment analysis or None if loading fails
+    """
     if not HAS_TRANSFORMERS:
         logger.warning("transformers not available, sentiment analysis disabled")
         return None
+    
     try:
-        logger.info("Loading German sentiment BERT model...")
-        logger.info(f"Using transformers cache directory: {os.environ.get('HF_HOME')}")
+        logger.info("Loading German sentiment analysis model...")
         
-        model_name = "oliverguhr/german-sentiment-bert"
+        # Configuration for sentiment analysis
+        model_config = {
+            "model_name": "oliverguhr/german-sentiment-bert",
+            "max_length": 512,
+            "truncation": True,
+            "padding": "max_length"
+        }
+        
+        cache_dir = pathlib.Path(os.environ.get('HF_HOME', '~/.cache/huggingface'))
+        logger.info(f"Using cache directory: {cache_dir}")
         
         # Check if model exists in cache
-        cache_path = pathlib.Path(os.environ.get('HF_HOME')) / "models--oliverguhr--german-sentiment-bert"
-        logger.info(f"HF_HOME: {os.environ.get('HF_HOME')}")
-        logger.info(f"Cache path: {cache_path}")
-        logger.info(f"Cache path exists: {cache_path.exists()}")
-        if cache_path.exists():
-            logger.info(f"Model found in cache: {cache_path}")
-        else:
-            logger.info(f"Model not found in cache *{cache_path}*, will download on first use")
+        model_path = cache_dir / f"models--{model_config['model_name'].replace('/', '--')}"
+        logger.info(f"Model path: {model_path}")
         
-        tok = AutoTokenizer.from_pretrained(model_name, local_files_only=False, cache_dir=str(pathlib.Path(os.environ.get('HF_HOME'))))
-        mdl = AutoModelForSequenceClassification.from_pretrained(model_name, local_files_only=False, cache_dir=str(pathlib.Path(os.environ.get('HF_HOME'))))
-        pipeline = hf_pipeline("sentiment-analysis", model=mdl, tokenizer=tok)
-        logger.info("German sentiment model loaded successfully")
-        return pipeline
+        if not model_path.exists():
+            logger.info("Model not found in cache, will download on first use")
+        
+        try:
+            # Load tokenizer with custom settings
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_config["model_name"],
+                cache_dir=str(cache_dir),
+                use_fast=True,
+                local_files_only=False
+            )
+            
+            # Load model with custom settings
+            model = AutoModelForSequenceClassification.from_pretrained(
+                model_config["model_name"],
+                cache_dir=str(cache_dir),
+                local_files_only=False,
+                num_labels=3  # positive, negative, neutral
+            )
+            
+            # Create pipeline with custom settings
+            pipeline = hf_pipeline(
+                "sentiment-analysis",
+                model=model,
+                tokenizer=tokenizer,
+                device=0 if torch.cuda.is_available() else -1,  # Use GPU if available
+                framework="pt",
+                return_all_scores=False,
+                truncation=True,
+                max_length=model_config["max_length"]
+            )
+            
+            logger.info("German sentiment model loaded and configured successfully")
+            return pipeline
+            
+        except Exception as e:
+            logger.error(f"Error initializing sentiment model: {e}")
+            logger.error(traceback.format_exc())
+            return None
+            
     except Exception as e:
-        logger.error(f"Failed to load sentiment model: {e}")
+        logger.error(f"Failed to load sentiment analysis: {e}")
+        logger.error(traceback.format_exc())
         return None
 
 def load_embedder():
@@ -352,24 +434,238 @@ def load_embedder():
     logger.error("All embedding models failed to load")
     return None
 
-def segment_rows(df: pd.DataFrame) -> pd.DataFrame:
+def detect_encoding(file_path: str, sample_size: int = 1024) -> str:
+    """Detect the encoding of a text file."""
+    import chardet
+    
+    with open(file_path, 'rb') as f:
+        raw_data = f.read(sample_size)
+    
+    result = chardet.detect(raw_data)
+    return result['encoding'] or 'utf-8'
+
+def clean_text(text: str, lang: str = 'de') -> str:
+    """
+    Clean and normalize text input with language-specific processing.
+    
+    Args:
+        text: Input text to clean
+        lang: Language code ('de' for German, 'en' for English, etc.)
+        
+    Returns:
+        Cleaned and normalized text
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    
+    # Remove any non-printable characters except newlines and tabs
+    import re
+    text = re.sub(r'[^\x20-\x7E\n\t\r]', ' ', text)
+    
+    # Normalize whitespace but preserve paragraph breaks
+    text = '\n\n'.join(
+        ' '.join(part.split()) 
+        for part in text.split('\n\n')
+    )
+    
+    # German-specific text normalization
+    if lang.lower() == 'de':
+        # Handle common German quotation marks and special characters
+        text = text.replace('„', '"')
+        text = text.replace('"', '"')
+        text = text.replace('''''', "'")
+        
+        # Replace common German abbreviations with full forms for better analysis
+        abbrev_map = {
+            r'\bzzgl\.\s*': 'bezüglich ',
+            r'\bbzw\.\s*': 'beziehungsweise ',
+            r'\bca\.\s*': 'circa ',
+            r'\bz\.B\.\s*': 'zum Beispiel ',
+            r'\bu\.a\.\s*': 'unter anderem ',
+            r'\betc\.\s*': 'und so weiter ',
+            r'\binsb\.\s*': 'insbesondere ',
+            r'\bggf\.\s*': 'gegebenenfalls ',
+            r'\bz\.T\.\s*': 'zum Teil ',
+            r'\bi\.d\.R\.\s*': 'in der Regel ',
+            r'\bz\.Z\.\s*': 'zur Zeit ',
+            r'\bbzw\.\s*': 'beziehungsweise ',
+            r'\bMrd\.\s*': 'Milliarden ',
+            r'\bMio\.\s*': 'Millionen ',
+            r'\bS\.\s*': 'Seite ',
+            r'\bff\.\s*': 'fortfolgende ',
+            r'\bNr\.\s*': 'Nummer ',
+            r'\bJh\.\s*': 'Jahrhundert ',
+        }
+        
+        for pattern, replacement in abbrev_map.items():
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        
+        # Handle common German compound word splits
+        text = re.sub(r'(\w+)([A-ZÄÖÜ][a-zäöüß]+)', r'\1 \2', text)
+    
+    # Additional cleaning steps
+    text = re.sub(r'\s+', ' ', text)  # Normalize all whitespace
+    text = text.strip()
+    
+    return text
+
+def load_csv_with_fallback(file_path: str) -> pd.DataFrame:
+    """Load CSV file with encoding detection and fallback mechanisms."""
+    encodings_to_try = [
+        detect_encoding(file_path),  # Try detected encoding first
+        'utf-8',
+        'latin1',
+        'iso-8859-1',
+        'cp1252',
+        'windows-1252'
+    ]
+    
+    last_error = None
+    for encoding in encodings_to_try:
+        try:
+            df = pd.read_csv(
+                file_path,
+                encoding=encoding,
+                dtype=str,  # Read all columns as strings initially
+                keep_default_na=False,  # Don't interpret 'NA' as NaN
+                na_values=['', ' '],  # Consider empty strings as NaN
+                skip_blank_lines=False,  # Keep empty lines to preserve row numbers
+                quoting=3,  # QUOTE_NONE
+                on_bad_lines='warn',  # Warn about bad lines but continue
+                engine='python'  # More robust but slower engine
+            )
+            
+            # Clean column names
+            df.columns = df.columns.str.strip()
+            
+            # Remove completely empty rows and columns
+            df = df.dropna(how='all')
+            df = df.loc[:, (df != '').any(axis=0)]
+            
+            if not df.empty:
+                logger.info(f"Successfully loaded CSV with {len(df)} rows and {len(df.columns)} columns using {encoding} encoding")
+                return df
+                
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Failed to load with {encoding} encoding: {str(e)}")
+            continue
+    
+    raise ValueError(f"Failed to load CSV file after trying multiple encodings. Last error: {str(last_error)}")
+
+def segment_rows(df: pd.DataFrame, min_text_length: int = 7) -> pd.DataFrame:
+    """
+    Segment DataFrame rows into individual text segments.
+    
+    Args:
+        df: Input DataFrame with survey responses
+        min_text_length: Minimum length of text to be considered valid
+        
+    Returns:
+        DataFrame with segmented text data
+    """
     logger.info(f"Segmenting {len(df)} rows into individual text segments")
-    cols = list(df.columns)
+    
+    # Ensure all columns are strings and clean them
+    df = df.astype(str).applymap(clean_text)
+    
+    # Get all column names and identify potential metadata columns
+    all_columns = list(df.columns)
+    metadata_columns = []
+    text_columns = []
+    
+    # Simple heuristic to identify metadata columns (assuming they have mostly unique values)
+    for col in all_columns:
+        unique_ratio = df[col].nunique() / len(df)
+        if unique_ratio > 0.9:  # Mostly unique values (likely IDs or metadata)
+            metadata_columns.append(col)
+        else:
+            text_columns.append(col)
+    
+    # If we couldn't identify metadata, assume last column is metadata (common survey format)
+    if not metadata_columns and len(all_columns) > 1:
+        metadata_columns = [all_columns[-1]]
+        text_columns = all_columns[:-1]
+    
+    logger.info(f"Identified text columns: {text_columns}")
+    logger.info(f"Identified metadata columns: {metadata_columns}")
+    
     segments = []
-    for i, row in df.iterrows():
-        expert_bio = row[cols[-1]]
-        for qi, col in enumerate(cols[:-1], start=1):
-            text = str(row[col]).strip()
-            if not text:
+    
+    for idx, row in df.iterrows():
+        # Extract metadata (if any)
+        metadata = {col: row[col] for col in metadata_columns if col in row}
+        
+        # Process each text column
+        for col_idx, col in enumerate(text_columns, start=1):
+            text = row[col].strip()
+            
+            # Skip empty or very short texts
+            if not text or len(text) < min_text_length:
                 continue
-            segments.append({
-                "set_id": int(i)+1,
-                "question_idx": qi,
-                "question": col,
-                "text": text,
-                "bio": expert_bio,
-            })
+                
+            # Split text into paragraphs (double newlines)
+            paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+            
+            # Create a segment for each paragraph
+            for para_idx, para in enumerate(paragraphs, start=1):
+                # Further split long paragraphs into sentences
+                sentences = [s.strip() for s in para.split('.') if s.strip()]
+                
+                # Create a segment for the full paragraph
+                segments.append({
+                    "set_id": idx + 1,
+                    "segment_id": f"{idx+1}.{col_idx}.{para_idx}",
+                    "question_idx": col_idx,
+                    "question": col,
+                    "text": para,
+                    "text_type": "paragraph",
+                    "char_count": len(para),
+                    "word_count": len(para.split()),
+                    "sentence_count": len(sentences),
+                    **metadata  # Add all metadata fields
+                })
+                
+                # Optionally create segments for individual sentences
+                for sent_idx, sent in enumerate(sentences, start=1):
+                    if len(sent) >= min_text_length:
+                        segments.append({
+                            "set_id": idx + 1,
+                            "segment_id": f"{idx+1}.{col_idx}.{para_idx}.{sent_idx}",
+                            "question_idx": col_idx,
+                            "question": col,
+                            "text": sent,
+                            "text_type": "sentence",
+                            "char_count": len(sent),
+                            "word_count": len(sent.split()),
+                            "sentence_count": 1,
+                            "parent_paragraph": para_idx,
+                            **metadata
+                        })
+    
     logger.info(f"Created {len(segments)} text segments from {len(df)} rows")
+    
+    # Convert to DataFrame and set appropriate data types
+    if segments:
+        result_df = pd.DataFrame(segments)
+        
+        # Set data types
+        type_mapping = {
+            'set_id': 'int32',
+            'question_idx': 'int32',
+            'char_count': 'int32',
+            'word_count': 'int32',
+            'sentence_count': 'int32',
+            'text_type': 'category'
+        }
+        
+        for col, dtype in type_mapping.items():
+            if col in result_df.columns:
+                result_df[col] = result_df[col].astype(dtype, errors='ignore')
+        
+        return result_df
+    
+    return pd.DataFrame()
     return pd.DataFrame(segments)
 
 def compute_embeddings(texts: List[str], embedder):
@@ -580,14 +876,27 @@ def run_pipeline(input_path: str, out_dir: str, k_clusters: int = 6, cfg_dir: st
         logger.info(f"Output directories created: {outp}")
 
         logger.info(f"Loading input data from: {input_path}")
-        df = pd.read_csv(input_path)
-        logger.info(f"Input data loaded: {df.shape[0]} rows, {df.shape[1]} columns")
-        
-        min_text_len=7
-        seg = segment_rows(df)
-        seg = seg[seg["text"].str.len()>=min_text_len]
-        logger.info(f"Wir verwenden {seg.shape[0]} Texte mit mindestens {min_text_len} Zeichen")
-        texts = seg["text"].tolist()
+        try:
+            # Load CSV with enhanced handling
+            df = load_csv_with_fallback(input_path)
+            logger.info(f"Input data loaded: {df.shape[0]} rows, {df.shape[1]} columns")
+            
+            # Segment rows with improved text processing
+            seg = segment_rows(df, min_text_length=7)
+            
+            if seg.empty:
+                raise ValueError("No valid text segments found in the input data")
+                
+            logger.info(f"Processing {len(seg)} text segments")
+            logger.info(f"Segment distribution by type:\n{seg['text_type'].value_counts()}")
+            
+            # Prepare texts for further processing
+            texts = seg["text"].tolist()
+            
+        except Exception as e:
+            logger.error(f"Error loading or processing input data: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
 
         logger.info("Loading NLP models...")
         nlp = load_ner()
