@@ -1,0 +1,56 @@
+services:
+  qda_api:
+    build: ./backend
+    container_name: qda_api
+    ports: ["8009:8000"]
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - ./data:/app/data
+      - ./out:/app/out
+      - ./config:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - qda_worker
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  qda_worker:
+    build: ./worker
+    container_name: qda_worker
+    ports: ["8001:8001"]
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_HOST=http://ollama:11434
+      - HF_HOME=${HF_HOME}
+      - SPACY_DATA=${SPACY_CACHE}
+      - TORCH_HOME=${TORCH_CACHE}
+      - SENTENCE_TRANSFORMERS_HOME=${SENTENCE_TRANSFORMERS_HOME}
+      - SENTENCE_TRANSFORMERS_CACHE=/root/.cache/sentence-transformers
+    volumes:
+      - ./data:/app/data
+      - ./out:/app/out
+      - ./config:/app/config
+      - ${HUGGINGFACE_CACHE}:/root/.cache/huggingface
+      - ${SPACY_CACHE}:/root/.local/share/spacy
+      - ${TORCH_CACHE}:/root/.cache/torch
+      - ${SENTENCE_TRANSFORMERS_HOME}:/root/.cache/sentence-transformers
+    command: python main.py
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports: ["6333:6333"]
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports: ["11434:11434"]
+    volumes:
+      - ollama_models:/root/.ollama
+
+volumes:
+  qdrant_storage: {}
+  ollama_models: {}

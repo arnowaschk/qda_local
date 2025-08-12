@@ -1,0 +1,7 @@
+{
+    "window.menuBarVisibility": "classic",
+    "window.titleBarStyle": "custom",
+    "workbench.commandCenter": true,
+    "zenMode.restore": false
+  }
+  

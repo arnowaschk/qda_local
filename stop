@@ -1,0 +1,10 @@
+#!/bin/bash
+
+
+# Resolve symlinks to actual paths and export them
+export HUGGINGFACE_CACHE=$(readlink -f ~/.cache/huggingface)
+export SPACY_CACHE=$(readlink -f ~/.local/share/spacy)
+export TORCH_CACHE=$(readlink -f ~/.cache/torch)
+export SENTENCE_TRANSFORMERS_HOME=$(readlink -f ~/.cache/sentence_transformers)
+
+docker compose down -v
