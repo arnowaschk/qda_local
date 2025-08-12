@@ -1,0 +1,12 @@
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.1
+spacy==3.7.5
+markdown==3.6
+pyyaml==6.0.2
+networkx==3.3
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+textblob==0.17.1
+textblob-de==0.4.3
+pydantic==2.10.4
