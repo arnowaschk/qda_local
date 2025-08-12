@@ -1,0 +1,4 @@
+embedding_model: BAAI/bge-m3
+sentiment_model: oliverguhr/german-sentiment-bert
+spacy_model: de_core_news_lg
+llm_summary: none

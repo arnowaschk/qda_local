@@ -1,0 +1,23 @@
+policy:
+  mode: augment   # 'augment' or 'strict'
+codes:
+  - name: Batteriespeicher
+    any: ["Thermal Runaway", "(?i)Batterie", "(?i)Akk(u|us)", "(?i)USV", "(?i)Gasableitung", "(?i)Inertisierung"]
+  - name: Holz-/Hybridbau
+    any: ["(?i)Holz", "(?i)Hybrid", "(?i)CLT", "(?i)Kapselung", "(?i)Hohlraum"]
+  - name: Normen/Regulierung
+    any: ["(?i)Norm", "(?i)Bauordnung", "(?i)Zulassung", "(?i)CEN", "(?i)EN", "(?i)AbP"]
+  - name: Personenschutz/Evakuierung
+    any: ["(?i)Evakuierung", "(?i)Flucht", "(?i)Räumung", "(?i)Pflegeheim", "(?i)Krankenhaus", "(?i)Sprachalarm"]
+  - name: Sensorik/Detektion
+    any: ["(?i)Sensor", "(?i)Mehrkriter", "(?i)Thermal", "(?i)Akust", "(?i)Gas", "(?i)Video"]
+  - name: Robotik/Drohnen
+    any: ["(?i)Roboter", "(?i)Drohne", "(?i)autonom", "(?i)Kettenroboter"]
+  - name: Nachhaltigkeit/CO2
+    any: ["(?i)CO2", "(?i)Nachhalt", "(?i)Energie", "(?i)Gründach", "(?i)PV", "(?i)Dämm"]
+  - name: Rechenzentren/IT
+    any: ["(?i)USV", "(?i)RZ", "(?i)Kaltgang", "(?i)CRAC", "(?i)PDU"]
+  - name: Verkehr/Tunnel/Bahn
+    any: ["(?i)Tunnel", "(?i)Bahn", "(?i)Rolltreppe", "(?i)Bahnsteig", "(?i)Fahrzeugbrand"]
+  - name: Flughafen/Luftfahrt
+    any: ["(?i)Terminal", "(?i)Gepäck", "(?i)Hangar", "(?i)Airlines", "(?i)Passagier"]
