@@ -23,6 +23,13 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.metrics.pairwise import cosine_similarity
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    force=True
+)
 logger = logging.getLogger(__name__)
 
 # German stopwords support (spaCy -> NLTK -> default list)
@@ -41,7 +48,8 @@ try:
 except Exception:
     _NLTK_DE_STOPWORDS = None
 
-_DEFAULT_DE_STOPWORDS = set([
+"""
+_DEFAULT_DE_STOPWORDS = set(["'n'a'n",
     "der","die","das","und","oder","aber","doch","denn","weil","wenn","dass","da","wie","wer","was",
     "in","im","ins","am","an","auf","aus","bei","für","mit","nach","von","vor","zu","zum","zur","über","unter","ohne","um",
     "ein","eine","einer","einem","einen","kein","keine","keiner","keinem","keinen",
@@ -49,9 +57,11 @@ _DEFAULT_DE_STOPWORDS = set([
     "ich","du","er","sie","es","wir","ihr","nicht","nur","auch","schon","noch","so","sehr","mehr","weniger",
     "dies","diese","dieser","dieses","jener","jene","jenes","man","sich","sein","seine","seiner","seinem","seinen","ihr","ihre","nein","nichts"
 ])
+"""
+_DEFAULT_DE_STOPWORD=set([])
 
 GERMAN_STOPWORDS = list(_SPACY_DE_STOPWORDS or _NLTK_DE_STOPWORDS or _DEFAULT_DE_STOPWORDS)
-
+logger.info(f"Wir verwenden eine Liste mit {len(GERMAN_STOPWORDS)} Stopwords")
 # Optional imports with fallback
 try:
     import textblob_de
@@ -280,6 +290,7 @@ def extract_document_themes(texts: List[str], n_themes: int = 8) -> Dict[str, Li
         for topic_idx, topic in enumerate(lda.components_):
             top_words = [feature_names[i] for i in topic.argsort()[-10:][::-1]]
             themes[f"Theme_{topic_idx+1}"] = top_words
+            logger.info(f"Thema {topic_idx+1}: {top_words}")
         
         logger.info(f"Extracted {len(themes)} themes")
         logger.info(f"[END] extract_document_themes: returning {len(themes)} themes")
@@ -294,7 +305,7 @@ def generate_dynamic_policies(texts: List[str], base_policies: Optional[Dict] = 
     """Generiert Policies dynamisch aus dem Dokumentinhalt"""
     
     logger.info(f"[START] generate_dynamic_policies: {len(texts)} texts")
-    
+
     # 1. Hauptthemen extrahieren
     themes = extract_document_themes(texts)
     
@@ -309,14 +320,15 @@ def generate_dynamic_policies(texts: List[str], base_policies: Optional[Dict] = 
     # Häufigste Begriffe
     word_counts = Counter(all_words)
     top_terms = [word for word, count in word_counts.most_common(50)]
-    
+    logger.info(str([word for word, count in word_counts.most_common(10)])+" most common 10")
+
     # 3. Policy-Codes aus Themen generieren
     dynamic_codes = []
     used_names: Dict[str, int] = {}
 
     def slugify(token: str) -> str:
         token = token.strip().lower()
-        token = re.sub(r"[^a-z0-9]+", "_", token)
+        token = re.sub(r"[^a-z0-9äöüß]+", "_", token)
         token = re.sub(r"_+", "_", token).strip("_")
         return token or "x"
 
@@ -344,6 +356,7 @@ def generate_dynamic_policies(texts: List[str], base_policies: Optional[Dict] = 
             "display_name": display_name,
             "any": filtered_theme_words[:5]  # Top 5 Wörter pro Thema (ohne Stopwörter)
         })
+        logger.info("Dynamic Codes Core: "+str(dynamic_codes[-1]))
 
     # Häufige Begriffe als Codes
     for i in range(0, len(top_terms), 5):
@@ -360,6 +373,7 @@ def generate_dynamic_policies(texts: List[str], base_policies: Optional[Dict] = 
             "display_name": display_name,
             "any": batch
         })
+        logger.info("Dynamic Codes Freq: "+str(dynamic_codes[-1]))
     
     # 4. Mit Basis-Policies kombinieren (falls vorhanden)
     if base_policies and base_policies.get("codes"):

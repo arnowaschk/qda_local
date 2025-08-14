@@ -6,13 +6,56 @@ import sys
 import os
 import traceback
 import logging
+import traceback
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Import our direct logger from pipeline
+from pipeline import logger
+
+# Set up basic logging to stderr
+import sys
+import logging
+
+class DirectLogger:
+    def __init__(self, name):
+        self.name = name
+    
+    def _log(self, level, msg, *args):
+        if args:
+            msg = msg % args
+        print(f"{level} - {self.name} - {msg}", file=sys.stderr, flush=True)
+    
+    def debug(self, msg, *args):
+        self._log("DEBUG", msg, *args)
+    
+    def info(self, msg, *args):
+        self._log("INFO ", msg, *args)
+    
+    def warning(self, msg, *args):
+        self._log("WARN ", msg, *args)
+    
+    def error(self, msg, *args):
+        self._log("ERROR", msg, *args)
+    
+    def exception(self, msg, *args):
+        self._log("EXCEPTION", msg, *args)
+        traceback.print_exc(file=sys.stderr)
+    
+    def critical(self, msg, *args):
+        self._log("CRIT ", msg, *args)
+        sys.exit(1)
+
+# Override the root logger
+logging.root = DirectLogger('root')
+logger = logging.root
+
+# Add global exception handler
+def handle_exception(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+sys.excepthook = handle_exception
 
 app = FastAPI(title="QDA Worker API")
 
@@ -70,76 +113,45 @@ def run_pipeline_realtime(pipeline_command):
         fl_stderr = fcntl.fcntl(fd_stderr, fcntl.F_GETFL)
         fcntl.fcntl(fd_stderr, fcntl.F_SETFL, fl_stderr | os.O_NONBLOCK)
         
-        logger.info("Pipes set to non-blocking mode")
-        
-        while True:
-            # Check timeout
-            if time.time() - start_time > timeout_seconds:
-                logger.error(f"Worker pipeline execution timed out after {timeout_seconds} seconds")
-                process.terminate()
-                try:
-                    process.wait(timeout=10)  # Give it 10 seconds to terminate gracefully
-                except subprocess.TimeoutExpired:
-                    process.kill()  # Force kill if it doesn't terminate
-                return ProcessResponse(
-                    ok=False,
-                    error_message=f"Pipeline execution timed out after {timeout_seconds} seconds"
-                )
-            
-            # Check if process has finished
-            if process.poll() is not None:
-                logger.info(f"Subprocess finished with return code: {process.returncode}")
-                break
-            
-            # Try to read from pipes with select (non-blocking)
-            try:
-                ready_to_read, _, _ = select.select([process.stdout, process.stderr], [], [], 0.1)
-                
-                for pipe in ready_to_read:
-                    try:
-                        if pipe == process.stdout:
-                            line = pipe.readline()
-                            if line:
-                                line = line.strip()
-                                if line:
-                                    logger.info(f"Pipeline stdout: {line}")
-                                    stdout_lines.append(line)
-                        elif pipe == process.stderr:
-                            line = pipe.readline()
-                            if line:
-                                line = line.strip()
-                                if line:
-                                    logger.warning(f"Pipeline stderr: {line}")
-                                    stderr_lines.append(line)
-                    except (OSError, IOError) as e:
-                        # Pipe might be closed or have no data
-                        logger.debug(f"Pipe read error (normal): {e}")
-                        pass
-                        
-            except Exception as select_error:
-                logger.debug(f"Select error (normal): {select_error}")
-                pass
-            
-            # Small sleep to prevent busy waiting
-            time.sleep(0.1)
-        
-        # Read any remaining output
+        # Run the pipeline directly to see the error
+        logger.info("Running pipeline with direct output...")
         try:
-            remaining_stdout, remaining_stderr = process.communicate(timeout=10)
-            if remaining_stdout:
-                for line in remaining_stdout.strip().split('\n'):
-                    if line.strip():
-                        logger.info(f"Pipeline stdout (remaining): {line.strip()}")
-                        stdout_lines.append(line.strip())
-            if remaining_stderr:
-                for line in remaining_stderr.strip().split('\n'):
-                    if line.strip():
-                        logger.warning(f"Pipeline stderr (remaining): {line.strip()}")
-                        stderr_lines.append(line.strip())
-        except subprocess.TimeoutExpired:
-            logger.warning("Timeout reading remaining output, terminating subprocess")
-            process.terminate()
-            process.wait(timeout=5)
+            # Run with Popen to capture output in real-time
+            process = subprocess.Popen(
+                pipeline_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Combine stdout and stderr
+                text=True,
+                bufsize=1,
+                cwd="/app"
+            )
+            
+            # Read output line by line
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    output = output.strip()
+                    logger.info(f"PIPELINE: {output}")
+                    stdout_lines.append(output)
+            
+            return_code = process.poll()
+            
+            if return_code != 0:
+                error_msg = f"Pipeline failed with exit code {return_code}"
+                if stdout_lines:
+                    error_msg += f"\nLast 20 lines of output:\n"
+                    error_msg += "\n".join([f"  {line}" for line in stdout_lines[-20:]])
+                logger.error(error_msg)
+                return ProcessResponse(ok=False, error_message=error_msg)
+                
+        except Exception as e:
+            error_msg = f"Failed to run pipeline: {str(e)}"
+            logger.error(error_msg)
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return ProcessResponse(ok=False, error_message=error_msg)
         
         return_code = process.returncode
         logger.info(f"Worker pipeline execution completed - return code: {return_code}")
@@ -155,11 +167,13 @@ def run_pipeline_realtime(pipeline_command):
                 error_msg += f". Output: {'; '.join(stdout_lines[-5:])}"  # Last 5 output lines
             
             logger.error(f"Worker pipeline execution failed: {error_msg}")
+            time.sleep(5)
+            logger.error("Worker pipeline execution failed - returning")
             return ProcessResponse(ok=False, error_message=error_msg)
             
     except Exception as subprocess_error:
         logger.error(f"Worker failed to execute pipeline subprocess: {subprocess_error}")
-        import traceback
+        
         logger.error(f"Subprocess error traceback: {traceback.format_exc()}")
         raise subprocess_error
 
