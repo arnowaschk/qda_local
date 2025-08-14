@@ -36,7 +36,7 @@ def get_error_location():
 
 @app.get("/health")
 def health():
-    logger.info("Health check endpoint called")
+    #logger.info("Health check endpoint called")
     return {"status": "ok"}
 
 @app.post("/analyze", response_model=AnalyzeResponse)
