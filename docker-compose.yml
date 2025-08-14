@@ -1,56 +1,54 @@
 services:
   qda_api:
-    build: ./backend
+    build:
+      context: ./backend
     container_name: qda_api
-    ports: ["8009:8000"]
+    restart: unless-stopped
+    ports:
+      - "8009:8000"
     environment:
-      - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_HOST=http://ollama:11434
+      - LOG_LEVEL=INFO
     volumes:
       - ./data:/app/data
       - ./out:/app/out
       - ./config:/app/config
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      - qda_worker
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+      qda_worker:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    working_dir: /app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - qda_network
 
   qda_worker:
-    build: ./worker
+    build:
+      context: ./worker
     container_name: qda_worker
-    ports: ["8001:8001"]
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
     environment:
-      - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_HOST=http://ollama:11434
-      - HF_HOME=${HF_HOME}
-      - SPACY_DATA=${SPACY_CACHE}
-      - TORCH_HOME=${TORCH_CACHE}
-      - SENTENCE_TRANSFORMERS_HOME=${SENTENCE_TRANSFORMERS_HOME}
-      - SENTENCE_TRANSFORMERS_CACHE=/root/.cache/sentence-transformers
+      - LOG_LEVEL=INFO
+      - HF_HOME=/cache/huggingface
+      - SENT_HOME=/cache/german_sentiment
+      - TORCH_HOME=/cache/torch
+      - SENTENCE_TRANSFORMERS_HOME=/cache/sentence_transformers
+      - SPACY_DATA=/cache/spacy
     volumes:
       - ./data:/app/data
       - ./out:/app/out
       - ./config:/app/config
-      - ${HUGGINGFACE_CACHE}:/root/.cache/huggingface
-      - ${SPACY_CACHE}:/root/.local/share/spacy
-      - ${TORCH_CACHE}:/root/.cache/torch
-      - ${SENTENCE_TRANSFORMERS_HOME}:/root/.cache/sentence-transformers
-    command: python main.py
+      - ./worker:/app
+      - ./cache:/cache
+    networks:
+      - qda_network
 
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: qdrant
-    ports: ["6333:6333"]
-    volumes:
-      - qdrant_storage:/qdrant/storage
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports: ["11434:11434"]
-    volumes:
-      - ollama_models:/root/.ollama
-
-volumes:
-  qdrant_storage: {}
-  ollama_models: {}
+networks:
+  qda_network:
+    driver: bridge

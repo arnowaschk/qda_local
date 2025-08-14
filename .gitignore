@@ -4,3 +4,6 @@ config
 .env
 Interviews
 __pycache__
+cache
+
+*.swp

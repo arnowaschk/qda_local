@@ -10,3 +10,4 @@ uvicorn[standard]==0.30.6
 textblob==0.17.1
 textblob-de==0.4.3
 pydantic==2.10.4
+matplotlib==3.8.2
