@@ -13,6 +13,7 @@ This module contains functions for dynamically generating:
 
 # All comments in English.
 import logging
+import hashlib
 import re
 from collections import Counter, defaultdict
 from typing import List, Dict, Any, Optional
@@ -76,7 +77,20 @@ except Exception as e:
     logger.warning(f"textblob_de import failed: {e}, sentiment analysis will be limited")
 
 def extract_tech_keywords_from_texts(texts: List[str], top_k: int = 50) -> List[str]:
-    """Extrahiert technische Keywords aus Texten mit TF-IDF"""
+    """Extract technical keywords from texts using TF-IDF.
+    
+    Args:
+        texts: List of input texts to analyze
+        top_k: Number of top keywords to return (default: 50)
+        
+    Returns:
+        List of top technical keywords ordered by TF-IDF score
+        
+    Note:
+        - Uses German stopwords for filtering
+        - Processes n-grams (1-3 words)
+        - Filters out terms that appear in too few or too many documents
+    """
     
     logger.info(f"[START] extract_tech_keywords_from_texts: {len(texts)} texts, top_k={top_k}")
     try:
@@ -108,8 +122,21 @@ def extract_tech_keywords_from_texts(texts: List[str], top_k: int = 50) -> List[
         logger.info(f"[END] extract_tech_keywords_from_texts: returning []")
         return []
 
-def extract_topics_and_keywords(texts: List[str], n_topics: int = 10) -> Dict[str, List[str]]:
-    """Extrahiert Themen und Keywords mit LDA"""
+def _extract_topics_and_keywords(texts: List[str], n_topics: int = 10) -> Dict[str, List[str]]:
+    """Extract topics and keywords using Latent Dirichlet Allocation (LDA).
+    
+    Args:
+        texts: List of input texts to analyze
+        n_topics: Number of topics to extract (default: 10)
+        
+    Returns:
+        Dictionary mapping topic names to lists of top keywords
+        
+    Note:
+        - Uses German stopwords for filtering
+        - Processes n-grams (1-3 words)
+        - Returns 15 top keywords per topic
+    """
     
     logger.info(f"[START] extract_topics_and_keywords: {len(texts)} texts, n_topics={n_topics}")
     try:
@@ -148,8 +175,61 @@ def extract_topics_and_keywords(texts: List[str], n_topics: int = 10) -> Dict[st
         logger.info(f"[END] extract_topics_and_keywords: returning {{}}")
         return {}
 
+def extract_topics_and_keywords(texts: List[str], n_topics: int = 10) -> Dict[str, List[str]]:
+    from pipeline import NLP_CACHE
+
+    """Cached version of extract_topics_and_keywords that uses the global caching mechanism.
+    
+    Args:
+        texts: List of input texts
+        n_topics: Number of LDA topics to extract
+        
+    Returns:
+        Dictionary mapping topic names to lists of keywords
+    """
+    if not texts:
+        return {}
+        
+    # Create deterministic cache key from inputs
+    texts_tuple = tuple(texts) if isinstance(texts, list) else (texts,)
+    texts_str = str(texts_tuple).encode('utf-8')
+    texts_hash = hashlib.md5(texts_str).hexdigest()
+    cache_key = f"topics_keywords_{n_topics}_{texts_hash}"
+    try:
+        all_cache_ext_doc_keys=[x for x in NLP_CACHE if x.startswith("topics_keywords_")]
+        logger.info(f"Found {len(all_cache_ext_doc_keys)} cached topics/keywords entries")
+        logger.info(f"Cache keys: {all_cache_ext_doc_keys}")
+    except AssertionError as e:
+        logger.error(f"Maybe Cache empty yet? Error getting cache keys: {e}")
+    
+    # Try cache first
+    cached = NLP_CACHE.get(cache_key)
+    if cached is not None:
+        logger.info(f"Using cached topics/keywords (n={n_topics})")
+        return cached
+    
+    # Compute and store
+    logger.info(f"Computing topics/keywords (n={n_topics}) - this might take a while...")
+    topics = _extract_topics_and_keywords(texts, n_topics)
+    NLP_CACHE.set(cache_key, topics, expire=None)
+    logger.info(f"Cached topics/keywords (n={n_topics}), cache key: {cache_key}")
+    return topics
+
 def create_dynamic_keyword_lists(texts: List[str], cluster_labels: List[int]) -> Dict[str, List[str]]:
-    """Erstellt cluster-spezifische Keyword-Listen"""
+    """Generate cluster-specific keyword lists using TF-IDF.
+    
+    Args:
+        texts: List of input texts
+        cluster_labels: Cluster assignments for each text
+        
+    Returns:
+        Dictionary mapping cluster names to lists of top keywords
+        
+    Note:
+        - Creates separate keyword lists for each cluster
+        - Processes n-grams (1-2 words)
+        - Returns up to 20 top keywords per cluster
+    """
     
     logger.info(f"[START] create_dynamic_keyword_lists: {len(texts)} texts, {len(set(cluster_labels))} clusters")
     try:
@@ -192,7 +272,25 @@ def create_dynamic_keyword_lists(texts: List[str], cluster_labels: List[int]) ->
         return {}
 
 def hybrid_keyword_generation(texts: List[str], base_keywords: Optional[Dict] = None) -> Dict[str, Any]:
-    """Kombiniert vordefinierte und dynamisch generierte Keywords mit Scoring"""
+    """Combine predefined and dynamically generated keywords with scoring.
+    
+    Args:
+        texts: List of input texts to analyze
+        base_keywords: Optional dictionary of predefined keywords
+        
+    Returns:
+        Nested dictionary containing:
+        - Technical: TF-IDF based keywords
+        - Thematic: LDA-based topics and keywords
+        - Cluster_Specific: Cluster-based keywords
+        - Base_Keywords: Original base keywords (if provided)
+        - summary: Generation statistics
+        
+    Note:
+        - Performs clustering if enough texts are available
+        - Combines multiple keyword generation methods
+        - Includes source and count metadata
+    """
     
     logger.info(f"[START] hybrid_keyword_generation: {len(texts)} texts")
     
@@ -261,7 +359,20 @@ def hybrid_keyword_generation(texts: List[str], base_keywords: Optional[Dict] = 
     return hybrid_keywords
 
 def extract_document_themes(texts: List[str], n_themes: int = 8) -> Dict[str, List[str]]:
-    """Extrahiert Hauptthemen aus den Dokumenten mit LDA"""
+    """Extract main themes from documents using LDA.
+    
+    Args:
+        texts: List of input texts to analyze
+        n_themes: Number of themes to extract (default: 8)
+        
+    Returns:
+        Dictionary mapping theme names to lists of top keywords
+        
+    Note:
+        - Uses German stopwords for filtering
+        - Processes n-grams (1-3 words)
+        - Returns 10 top keywords per theme
+    """
     
     logger.info(f"[START] extract_document_themes: {len(texts)} texts, n_themes={n_themes}")
     try:
@@ -301,102 +412,21 @@ def extract_document_themes(texts: List[str], n_themes: int = 8) -> Dict[str, Li
         logger.info(f"[END] extract_document_themes: returning {{}}")
         return {}
 
-def generate_dynamic_policies(texts: List[str], base_policies: Optional[Dict] = None) -> Dict[str, Any]:
-    """Generiert Policies dynamisch aus dem Dokumentinhalt"""
-    
-    logger.info(f"[START] generate_dynamic_policies: {len(texts)} texts")
-
-    # 1. Hauptthemen extrahieren
-    themes = extract_document_themes(texts)
-    
-    # 2. Häufige Begriffe und Konzepte identifizieren
-    # Alle Wörter sammeln
-    all_words = []
-    stopset = set(GERMAN_STOPWORDS)
-    for text in texts:
-        words = re.findall(r'\b\w+\b', text.lower())
-        all_words.extend([w for w in words if len(w) > 2 and w not in stopset and not w.isdigit()])
-    
-    # Häufigste Begriffe
-    word_counts = Counter(all_words)
-    top_terms = [word for word, count in word_counts.most_common(50)]
-    logger.info(str([word for word, count in word_counts.most_common(10)])+" most common 10")
-
-    # 3. Policy-Codes aus Themen generieren
-    dynamic_codes = []
-    used_names: Dict[str, int] = {}
-
-    def slugify(token: str) -> str:
-        token = token.strip().lower()
-        token = re.sub(r"[^a-z0-9äöüß]+", "_", token)
-        token = re.sub(r"_+", "_", token).strip("_")
-        return token or "x"
-
-    def unique_name(base: str) -> str:
-        if base not in used_names:
-            used_names[base] = 1
-            return base
-        used_names[base] += 1
-        return f"{base}_{used_names[base]}"
- 
-    # Themen-basierte Codes
-    for theme_name, theme_words in themes.items():
-        # Stopwords aus Theme-Wörtern entfernen
-        filtered_theme_words = [w for w in theme_words if isinstance(w, str) and w.lower() not in stopset and len(w) > 2]
-        # Nimm die 1-2 signifikantesten Wörter als Basis
-        base_tokens = [slugify(w) for w in filtered_theme_words[:2] if w]
-        base_tokens = [t for t in base_tokens if t]
-        base_part = "_".join(base_tokens) if base_tokens else slugify(theme_name)
-        # Menschlich lesbarer Anzeigename
-        disp_tokens = [str(w).strip().capitalize() for w in filtered_theme_words[:2] if isinstance(w, str)]
-        display_name = (" ".join(disp_tokens) if disp_tokens else str(theme_name).strip()) + " Core"
-        name = unique_name(f"{base_part}_Core")
-        dynamic_codes.append({
-            "name": name,
-            "display_name": display_name,
-            "any": filtered_theme_words[:5]  # Top 5 Wörter pro Thema (ohne Stopwörter)
-        })
-        logger.info("Dynamic Codes Core: "+str(dynamic_codes[-1]))
-
-    # Häufige Begriffe als Codes
-    for i in range(0, len(top_terms), 5):
-        batch = top_terms[i:i+5]
-        # Nimm 1-2 führende Terme als Basis
-        base_tokens = [slugify(w) for w in batch[:2] if w]
-        base_tokens = [t for t in base_tokens if t]
-        base_part = "_".join(base_tokens) if base_tokens else f"term_{i//5+1}"
-        disp_tokens = [str(w).strip().capitalize() for w in batch[:2] if isinstance(w, str)]
-        display_name = (" ".join(disp_tokens) if disp_tokens else f"Terms {i//5+1}") + " frequent term"
-        name = unique_name(f"{base_part}_frequent_term")
-        dynamic_codes.append({
-            "name": name,
-            "display_name": display_name,
-            "any": batch
-        })
-        logger.info("Dynamic Codes Freq: "+str(dynamic_codes[-1]))
-    
-    # 4. Mit Basis-Policies kombinieren (falls vorhanden)
-    if base_policies and base_policies.get("codes"):
-        dynamic_codes.extend(base_policies["codes"])
-    
-    # 5. Dynamische Policies erstellen
-    dynamic_policies = {
-        "policy": {
-            "mode": "augment",
-            "generation_method": "dynamic",
-            "themes_extracted": len(themes)
-        },
-        "codes": dynamic_codes,
-        "themes": themes,
-        "top_terms": top_terms[:20]
-    }
-    
-    logger.info(f"Generated {len(dynamic_codes)} dynamic policy codes from {len(themes)} themes")
-    logger.info(f"[END] generate_dynamic_policies: returning {len(dynamic_policies.get('codes', []))} codes")
-    return dynamic_policies
-
 def analyze_stances_with_dynamic_patterns(texts: List[str], stance_patterns: Dict[str, List[str]]) -> List[List[str]]:
-    """Analysiert Stances mit dynamisch generierten Patterns"""
+    """Analyze text stances using dynamic patterns.
+    
+    Args:
+        texts: List of input texts to analyze
+        stance_patterns: Dictionary mapping stance names to lists of regex patterns
+        
+    Returns:
+        List of stance labels for each text
+        
+    Note:
+        - Returns 'neutral' if no patterns match
+        - Uses case-insensitive matching
+        - Handles invalid regex patterns gracefully
+    """
     
     logger.info(f"[START] analyze_stances_with_dynamic_patterns: {len(texts)} texts, {len(stance_patterns) if stance_patterns else 0} patterns")
     stance_results = []
@@ -422,7 +452,20 @@ def analyze_stances_with_dynamic_patterns(texts: List[str], stance_patterns: Dic
     return stance_results
 
 def generate_stance_patterns_from_texts(texts: List[str], n_patterns: int = 10) -> Dict[str, List[str]]:
-    """Generiert Stance-Patterns aus Texten mit TF-IDF und KMeans"""
+    """Generate stance patterns from texts using TF-IDF and KMeans clustering.
+    
+    Args:
+        texts: List of input texts to analyze
+        n_patterns: Target number of patterns to generate (default: 10)
+        
+    Returns:
+        Dictionary mapping cluster-based stance names to lists of keywords
+        
+    Note:
+        - Automatically determines optimal number of clusters
+        - Processes n-grams (1-3 words)
+        - Returns up to 10 top keywords per cluster
+    """
     
     logger.info(f"[START] generate_stance_patterns_from_texts: {len(texts)} texts, n_patterns={n_patterns}")
     try:
@@ -480,7 +523,19 @@ def generate_stance_patterns_from_texts(texts: List[str], n_patterns: int = 10) 
         return {}
 
 def generate_sentiment_based_stance_patterns(texts: List[str]) -> Dict[str, List[str]]:
-    """Generiert Stance-Patterns basierend auf Sentiment-Analyse"""
+    """Generate stance patterns based on sentiment analysis.
+    
+    Args:
+        texts: List of input texts to analyze
+        
+    Returns:
+        Dictionary mapping sentiment-based stance names to lists of keywords
+        
+    Note:
+        - Requires textblob_de package for German sentiment analysis
+        - Categorizes texts as positive, negative, or neutral
+        - Returns up to 20 top keywords per sentiment category
+    """
     
     logger.info(f"[START] generate_sentiment_based_stance_patterns: {len(texts)} texts")
     try:
@@ -542,7 +597,19 @@ def generate_sentiment_based_stance_patterns(texts: List[str]) -> Dict[str, List
         return {}
 
 def generate_contextual_stance_patterns(texts: List[str]) -> Dict[str, List[str]]:
-    """Generiert Stance-Patterns aus dem Kontext bekannter Stance-Indikatoren"""
+    """Generate stance patterns from the context of known stance indicators.
+    
+    Args:
+        texts: List of input texts to analyze
+        
+    Returns:
+        Dictionary mapping context-based stance names to lists of keywords
+        
+    Note:
+        - Looks for known stance indicators (pro/contra/neutral)
+        - Extracts surrounding context words
+        - Returns up to 15 context words per stance type
+    """
     
     logger.info(f"[START] generate_contextual_stance_patterns: {len(texts)} texts")
     try:
@@ -594,7 +661,21 @@ def generate_contextual_stance_patterns(texts: List[str]) -> Dict[str, List[str]
         return {}
 
 def generate_comprehensive_stance_patterns(texts: List[str], base_stance_patterns: Optional[Dict] = None) -> Dict[str, List[str]]:
-    """Kombiniert alle Stance-Pattern-Generierungsmethoden"""
+    """Combine all stance pattern generation methods into comprehensive patterns.
+    
+    Args:
+        texts: List of input texts to analyze
+        base_stance_patterns: Optional dictionary of predefined stance patterns
+        
+    Returns:
+        Dictionary mapping comprehensive stance pattern names to keyword lists
+        
+    Note:
+        - Combines TF-IDF, sentiment, and contextual patterns
+        - Removes duplicate terms
+        - Limits to 20 keywords per pattern
+        - Preserves original base patterns if provided
+    """
     
     logger.info(f"[START] generate_comprehensive_stance_patterns: {len(texts)} texts")
     

@@ -2,6 +2,13 @@
     "window.menuBarVisibility": "classic",
     "window.titleBarStyle": "custom",
     "workbench.commandCenter": true,
-    "zenMode.restore": false
-  }
+    "zenMode.restore": false,
+    "search.exclude": {
+      "data": true,
+      "out": true,
+      "cache": true,
+      "config": true,
+      ".venv": true
+    }
+}
   

@@ -7,12 +7,52 @@ from the QDA analysis results.
 
 import os
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
+import re
+import datetime
 
 logger = logging.getLogger(__name__)
 
-def generate_html_report(seg, cluster_info, cluster_summaries, codebook_sorted, global_summary, input_path, k):
-    """Generate a comprehensive HTML report with proper formatting"""
+def generate_html_report(
+    seg: List[Dict[str, Any]],
+    cluster_info: Dict[int, Dict[str, Any]],
+    cluster_summaries: Dict[int, str],
+    codebook_sorted: Dict[str, int],
+    global_summary: str,
+    input_path: str,
+    k: int
+) -> str:
+    """Generate a comprehensive HTML report from QDA analysis results.
+    
+    Creates a well-formatted HTML document that presents the analysis results
+    including cluster information, codebook, and global summary in a visually
+    appealing and interactive format.
+    
+    Args:
+        seg: List of text segments/documents that were analyzed
+        cluster_info: Dictionary mapping cluster IDs to their metadata and content
+        cluster_summaries: Dictionary mapping cluster IDs to their summary text
+        codebook_sorted: Dictionary of code names and their frequencies, sorted
+        global_summary: Overall summary text of the analysis
+        input_path: Path to the input file that was analyzed
+        k: Number of clusters used in the analysis
+        
+    Returns:
+        str: Complete HTML document as a string
+        
+    Example:
+        >>> report = generate_html_report(
+        ...     segments,
+        ...     cluster_data,
+        ...     cluster_summaries,
+        ...     sorted_codes,
+        ...     "Overall analysis summary...",
+        ...     "input/survey_data.csv",
+        ...     5
+        ... )
+        >>> with open("report.html", "w") as f:
+        ...     f.write(report)
+    """
     
     # Start building the HTML content
     html_parts = []
@@ -193,7 +233,10 @@ def generate_html_report(seg, cluster_info, cluster_summaries, codebook_sorted, 
                 <li><strong>Eingabedatei:</strong> """ + os.path.basename(input_path) + """</li>
                 <li><strong>Anzahl Cluster:</strong> """ + str(k) + """</li>
                 <li><strong>Anzahl Texte:</strong> """ + str(len(seg)) + """</li>
-                <li><strong>Generiert am:</strong> """ + str(os.path.getmtime(input_path)) + """</li>
+                <li><strong>Generiert am:</strong> """ + (
+                    datetime.datetime.fromtimestamp(os.path.getmtime(input_path)).strftime('%Y-%m-%d %H:%M')
+                    if input_path and os.path.exists(input_path) else datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+                ) + """</li>
             </ul>
         </div>
         
@@ -214,7 +257,7 @@ def generate_html_report(seg, cluster_info, cluster_summaries, codebook_sorted, 
     
     # Cluster sections
     for cluster_id in range(k):
-        if cluster_id in cluster_info:
+        if cluster_info and cluster_id in cluster_info:
             cluster_data = cluster_info[cluster_id]
             cluster_summary = cluster_summaries.get(cluster_id, "Keine Zusammenfassung verfügbar")
             logger.info(f"Cluster {cluster_id} is {cluster_data.__repr__()[:200]}")
@@ -225,13 +268,13 @@ def generate_html_report(seg, cluster_info, cluster_summaries, codebook_sorted, 
                 <h3>Cluster {cluster_id + 1}</h3>
             </div>
             <div class="cluster-content">
-                <p><strong>Anzahl Texte:</strong> {len(cluster_data['texts'])}</p>
-                <p><strong>Durchschnittliche Länge:</strong> {cluster_data['avg_length']:.1f} Zeichen</p>
+                <p><strong>Anzahl Texte:</strong> {len(cluster_data.get('texts', []))}</p>
+                <p><strong>Durchschnittliche Länge:</strong> {cluster_data.get('avg_length', 0):.1f} Zeichen</p>
                 
                 <h4>Beispieltexte:</h4>""")
             
             # Show first 3 texts as examples
-            for i, text in enumerate(cluster_data['texts'][:3]):
+            for i, text in enumerate((cluster_data.get('texts') or [])[:3]):
                 html_parts.append(f"""
                 <div class="text-example">
                     <div class="question">Text {i + 1}:</div>
@@ -249,7 +292,7 @@ def generate_html_report(seg, cluster_info, cluster_summaries, codebook_sorted, 
         <div class="codebook">
             <h2>Codebook</h2>""")
     
-    for code_name, count in codebook_sorted.items():
+    for code_name, count in (codebook_sorted or {}).items():
         html_parts.append(f"""
             <div class="code-item">
                 <div class="code-name">{code_name}</div>
@@ -264,7 +307,8 @@ def generate_html_report(seg, cluster_info, cluster_summaries, codebook_sorted, 
             <p>""")
     
     if global_summary:
-        html_parts.append(global_summary)
+        # apply minimal formatting for readability
+        html_parts.append(format_text_for_html(str(global_summary)))
     else:
         html_parts.append("Keine globale Zusammenfassung verfügbar.")
     
@@ -282,20 +326,39 @@ def generate_html_report(seg, cluster_info, cluster_summaries, codebook_sorted, 
     return ''.join(html_parts) 
 
 def generate_policies_html(
-    policies: dict,
-    dynamic_policies: dict,
-    keywords: dict,
-    dynamic_keywords: dict,
-    stance_patterns: dict,
-    used_policies: set,
-    used_keywords: set,
-    used_stances: set,
+    policies: Dict[str, Any],
+    dynamic_policies: Dict[str, Any],
+    keywords: Dict[str, Any],
+    dynamic_keywords: Dict[str, Any],
+    stance_patterns: Dict[str, List[str]],
+    used_policies: Set[str],
+    used_keywords: Set[str],
+    used_stances: Set[str],
     input_path: str
-):
-    """
-    Generate a summary HTML report (policies.html) showing all policies, keywords, and stances.
-    - Asterisk * for dynamically generated
-    - Minus - for unused
+) -> str:
+    """Generate an HTML report of policies, keywords, and stance patterns.
+    
+    Creates a comprehensive overview of all analysis policies, keywords, and stances,
+    highlighting which items were actually used during analysis. Dynamically generated
+    items are marked with an asterisk (*) and unused items with a minus (-).
+    
+    Args:
+        policies: Dictionary of static policy definitions
+        dynamic_policies: Dictionary of dynamically generated policies
+        keywords: Dictionary of static keyword definitions
+        dynamic_keywords: Dictionary of dynamically generated keywords
+        stance_patterns: Dictionary of stance patterns and their definitions
+        used_policies: Set of policy names that were used in analysis
+        used_keywords: Set of keywords that were matched in the text
+        used_stances: Set of stance patterns that were detected
+        input_path: Path to the input file that was analyzed
+        
+    Returns:
+        str: Complete HTML document as a string
+        
+    Note:
+        - Items marked with * were dynamically generated during analysis
+        - Items marked with - were not used in the current analysis
     """
     import datetime
     html_parts = []
@@ -392,3 +455,82 @@ def generate_policies_html(
     html_parts.append('<div class="footer">QDA Pipeline Policies/Keywords/Stances Übersicht</div>')
     html_parts.append('</div></body></html>')
     return ''.join(html_parts) 
+
+def format_text_for_html(text: str) -> str:
+    """Convert plain text with markdown-style formatting to HTML.
+    
+    Processes text with markdown-style formatting and converts it to HTML.
+    Handles common formatting patterns like bold, italics, headers, lists,
+    code blocks, and URLs.
+    
+    Args:
+        text: Input text potentially containing markdown-style formatting
+        
+    Returns:
+        str: Formatted HTML text
+        
+    Example:
+        >>> format_text("**Bold** and *italic* text")
+        '&lt;strong&gt;Bold&lt;/strong&gt; and &lt;em&gt;italic&lt;/em&gt; text'
+        
+    Supported Formatting:
+        - **bold** → &lt;strong&gt;bold&lt;/strong&gt;
+        - *italic* → &lt;em&gt;italic&lt;/em&gt;
+        - # Header → &lt;h4&gt;Header&lt;/h4&gt;
+        - - Item → &lt;li&gt;Item&lt;/li&gt;
+        - `code` → &lt;code&gt;code&lt;/code&gt;
+        - URLs → Clickable links
+    """
+    if not text:
+        return ""
+    
+    # Replace line breaks with <br> tags
+    text = text.replace('\n', '<br>')
+    
+    # Handle markdown-style formatting
+    # Bold: **text** -> <strong>text</strong>
+    text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic: *text* -> <em>text</em>
+    text = re.sub(r'\*(.*?)\*', r'<em>\1</em>', text)
+    
+    # Headers: # Header -> <h4>Header</h4>
+    text = re.sub(r'^#\s+(.+)$', r'<h4>\1</h4>', text, flags=re.MULTILINE)
+    text = re.sub(r'^##\s+(.+)$', r'<h5>\1</h5>', text, flags=re.MULTILINE)
+    text = re.sub(r'^###\s+(.+)$', r'<h6>\1</h6>', text, flags=re.MULTILINE)
+    
+    # Lists: - item -> <li>item</li>
+    text = re.sub(r'^-\s+(.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    
+    # Wrap lists in <ul> tags
+    if '<li>' in text:
+        # Find consecutive <li> tags and wrap them
+        lines = text.split('<br>')
+        formatted_lines = []
+        in_list = False
+        
+        for line in lines:
+            if line.strip().startswith('<li>'):
+                if not in_list:
+                    formatted_lines.append('<ul>')
+                    in_list = True
+                formatted_lines.append(line)
+            else:
+                if in_list:
+                    formatted_lines.append('</ul>')
+                    in_list = False
+                formatted_lines.append(line)
+        
+        if in_list:
+            formatted_lines.append('</ul>')
+        
+        text = '<br>'.join(formatted_lines)
+    
+    # Code blocks: `code` -> <code>code</code>
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    
+    # URLs: http://... -> <a href="...">...</a>
+    text = re.sub(r'https?://[^\s<>]+', r'<a href="\g<0>" target="_blank">\g<0></a>', text)
+    
+    return text
+
