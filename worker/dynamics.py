@@ -17,12 +17,9 @@ import hashlib
 import re
 from collections import Counter, defaultdict
 from typing import List, Dict, Any, Optional
-import numpy as np
-import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.cluster import KMeans
 from sklearn.decomposition import LatentDirichletAllocation
-from sklearn.metrics.pairwise import cosine_similarity
 
 # Configure logging
 logging.basicConfig(
@@ -61,11 +58,20 @@ _DEFAULT_DE_STOPWORDS = set(["'n'a'n",
 """
 _DEFAULT_DE_STOPWORD=set([])
 
+# Default German stopwords as fallback
+_DEFAULT_DE_STOPWORDS = set([
+    "der", "die", "das", "und", "oder", "aber", "doch", "denn", "weil", "wenn", "dass", "da", "wie", "wer", "was",
+    "in", "im", "ins", "am", "an", "auf", "aus", "bei", "für", "mit", "nach", "von", "vor", "zu", "zum", "zur", "über", "unter", "ohne", "um",
+    "ein", "eine", "einer", "einem", "einen", "kein", "keine", "keiner", "keinem", "keinen",
+    "ist", "sind", "war", "waren", "wird", "werden", "wurde", "wurden", "hat", "haben", "habe", "hatte", "hatten",
+    "ich", "du", "er", "sie", "es", "wir", "ihr", "nicht", "nur", "auch", "schon", "noch", "so", "sehr", "mehr", "weniger",
+    "dies", "diese", "dieser", "dieses", "jener", "jene", "jenes", "man", "sich", "sein", "seine", "seiner", "seinem", "seinen", "ihr", "ihre", "nein", "nichts"
+])
+
 GERMAN_STOPWORDS = list(_SPACY_DE_STOPWORDS or _NLTK_DE_STOPWORDS or _DEFAULT_DE_STOPWORDS)
 logger.info(f"Wir verwenden eine Liste mit {len(GERMAN_STOPWORDS)} Stopwords")
 # Optional imports with fallback
 try:
-    import textblob_de
     from textblob_de import TextBlobDE
     HAS_TEXTBLOB = True
     logger.info("textblob_de successfully imported")
@@ -113,13 +119,13 @@ def extract_tech_keywords_from_texts(texts: List[str], top_k: int = 50) -> List[
         sorted_features = sorted(feature_scores, key=lambda x: x[1], reverse=True)
         top_keywords = [word for word, score in sorted_features[:top_k]]
         
-        logger.info(f"Extracted {len(top_keywords)} technical keywords from texts")
-        logger.info(f"[END] extract_tech_keywords_from_texts: returning {len(top_keywords)} keywords")
+        logger.info("Extracted %d technical keywords from texts", len(top_keywords))
+        logger.info("[END] extract_tech_keywords_from_texts: returning %d keywords", len(top_keywords))
         return top_keywords
         
     except Exception as e:
-        logger.warning(f"Failed to extract technical keywords: {e}")
-        logger.info(f"[END] extract_tech_keywords_from_texts: returning []")
+        logger.warning("Failed to extract technical keywords: %s", str(e))
+        logger.info("[END] extract_tech_keywords_from_texts: returning []")
         return []
 
 def _extract_topics_and_keywords(texts: List[str], n_topics: int = 10) -> Dict[str, List[str]]:
@@ -166,13 +172,13 @@ def _extract_topics_and_keywords(texts: List[str], n_topics: int = 10) -> Dict[s
             top_keywords = [feature_names[i] for i in topic.argsort()[-15:][::-1]]
             topics_keywords[f"Topic_{topic_idx+1}"] = top_keywords
         
-        logger.info(f"Extracted {len(topics_keywords)} topics with keywords")
-        logger.info(f"[END] extract_topics_and_keywords: returning {len(topics_keywords)} topics")
+        logger.info("Extracted %d topics with keywords", len(topics_keywords))
+        logger.info("[END] extract_topics_and_keywords: returning %d topics", len(topics_keywords))
         return topics_keywords
         
     except Exception as e:
-        logger.warning(f"Failed to extract topics and keywords: {e}")
-        logger.info(f"[END] extract_topics_and_keywords: returning {{}}")
+        logger.warning("Failed to extract topics and keywords: %s", str(e))
+        logger.info("[END] extract_topics_and_keywords: returning {}")
         return {}
 
 def extract_topics_and_keywords(texts: List[str], n_topics: int = 10) -> Dict[str, List[str]]:
@@ -262,13 +268,13 @@ def create_dynamic_keyword_lists(texts: List[str], cluster_labels: List[int]) ->
                 top_keywords = [word for word, score in sorted_features[:20]]
                 cluster_keywords[f"Cluster_{cluster_id}"] = top_keywords
         
-        logger.info(f"Created dynamic keyword lists for {len(cluster_keywords)} clusters")
-        logger.info(f"[END] create_dynamic_keyword_lists: returning {len(cluster_keywords)} clusters")
+        logger.info("Created dynamic keyword lists for %d clusters", len(cluster_keywords))
+        logger.info("[END] create_dynamic_keyword_lists: returning %d clusters", len(cluster_keywords))
         return cluster_keywords
         
     except Exception as e:
-        logger.warning(f"Failed to create dynamic keyword lists: {e}")
-        logger.info(f"[END] create_dynamic_keyword_lists: returning {{}}")
+        logger.warning("Failed to create dynamic keyword lists: %s", str(e))
+        logger.info("[END] create_dynamic_keyword_lists: returning {}")
         return {}
 
 def hybrid_keyword_generation(texts: List[str], base_keywords: Optional[Dict] = None) -> Dict[str, Any]:
@@ -354,8 +360,8 @@ def hybrid_keyword_generation(texts: List[str], base_keywords: Optional[Dict] = 
         "generation_method": "hybrid_dynamic_static"
     }
     
-    logger.info(f"Generated hybrid keywords: {total_keywords} total keywords across {len(hybrid_keywords)} categories")
-    logger.info(f"[END] hybrid_keyword_generation: returning {len(hybrid_keywords)} categories")
+    logger.info("Generated hybrid keywords: %d total keywords across %d categories", total_keywords, len(hybrid_keywords))
+    logger.info("[END] hybrid_keyword_generation: returning %d categories", len(hybrid_keywords))
     return hybrid_keywords
 
 def extract_document_themes(texts: List[str], n_themes: int = 8) -> Dict[str, List[str]]:
@@ -401,15 +407,15 @@ def extract_document_themes(texts: List[str], n_themes: int = 8) -> Dict[str, Li
         for topic_idx, topic in enumerate(lda.components_):
             top_words = [feature_names[i] for i in topic.argsort()[-10:][::-1]]
             themes[f"Theme_{topic_idx+1}"] = top_words
-            logger.info(f"Thema {topic_idx+1}: {top_words}")
+            logger.info("Thema %d: %s", topic_idx+1, top_words)
         
-        logger.info(f"Extracted {len(themes)} themes")
-        logger.info(f"[END] extract_document_themes: returning {len(themes)} themes")
+        logger.info("Extracted %d themes", len(themes))
+        logger.info("[END] extract_document_themes: returning %d themes", len(themes))
         return themes
         
     except Exception as e:
-        logger.warning(f"Failed to extract themes: {e}")
-        logger.info(f"[END] extract_document_themes: returning {{}}")
+        logger.warning("Failed to extract themes: %s", str(e))
+        logger.info("[END] extract_document_themes: returning {}")
         return {}
 
 def analyze_stances_with_dynamic_patterns(texts: List[str], stance_patterns: Dict[str, List[str]]) -> List[List[str]]:
@@ -513,13 +519,13 @@ def generate_stance_patterns_from_texts(texts: List[str], n_patterns: int = 10) 
                 
                 stance_patterns[f"Cluster_{cluster_id+1}_Stance"] = top_features
         
-        logger.info(f"Generated {len(stance_patterns)} stance patterns from {len(texts)} texts")
-        logger.info(f"[END] generate_stance_patterns_from_texts: returning {len(stance_patterns)} patterns")
+        logger.info("Generated %d stance patterns from %d texts", len(stance_patterns), len(texts))
+        logger.info("[END] generate_stance_patterns_from_texts: returning %d patterns", len(stance_patterns))
         return stance_patterns
         
     except Exception as e:
-        logger.warning(f"Failed to generate stance patterns from texts: {e}")
-        logger.info(f"[END] generate_stance_patterns_from_texts: returning {{}}")
+        logger.warning("Failed to generate stance patterns from texts: %s", str(e))
+        logger.info("[END] generate_stance_patterns_from_texts: returning {}")
         return {}
 
 def generate_sentiment_based_stance_patterns(texts: List[str]) -> Dict[str, List[str]]:
@@ -541,7 +547,7 @@ def generate_sentiment_based_stance_patterns(texts: List[str]) -> Dict[str, List
     try:
         if not HAS_TEXTBLOB:
             logger.warning("Skipping sentiment-based stance patterns due to missing textblob_de.")
-            logger.info(f"[END] generate_sentiment_based_stance_patterns: returning {{}}")
+            logger.info("[END] generate_sentiment_based_stance_patterns: returning {}")
             return {}
 
         # Sentiment für jeden Text berechnen
@@ -551,7 +557,8 @@ def generate_sentiment_based_stance_patterns(texts: List[str]) -> Dict[str, List
                 blob = TextBlobDE(text)
                 sentiment = blob.sentiment.polarity
                 text_sentiments.append((text, sentiment))
-            except:
+            except (ValueError, AttributeError, Exception) as e:
+                logger.debug("Error in sentiment analysis for text: %s", str(e))
                 text_sentiments.append((text, 0.0))
         
         # Texte nach Sentiment gruppieren
@@ -593,7 +600,7 @@ def generate_sentiment_based_stance_patterns(texts: List[str]) -> Dict[str, List
         
     except Exception as e:
         logger.warning(f"Failed to generate sentiment-based stance patterns: {e}")
-        logger.info(f"[END] generate_sentiment_based_stance_patterns: returning {{}}")
+        logger.info(f"[END] generate_sentiment_based_stance_patterns: returning {'{}'}")
         return {}
 
 def generate_contextual_stance_patterns(texts: List[str]) -> Dict[str, List[str]]:
@@ -656,8 +663,8 @@ def generate_contextual_stance_patterns(texts: List[str]) -> Dict[str, List[str]
         return contextual_patterns
         
     except Exception as e:
-        logger.warning(f"Failed to generate contextual stance patterns: {e}")
-        logger.info(f"[END] generate_contextual_stance_patterns: returning {{}}")
+        logger.warning("Failed to generate contextual stance patterns: %s", str(e))
+        logger.info("[END] generate_contextual_stance_patterns: returning {}")
         return {}
 
 def generate_comprehensive_stance_patterns(texts: List[str], base_stance_patterns: Optional[Dict] = None) -> Dict[str, List[str]]:
@@ -677,7 +684,7 @@ def generate_comprehensive_stance_patterns(texts: List[str], base_stance_pattern
         - Preserves original base patterns if provided
     """
     
-    logger.info(f"[START] generate_comprehensive_stance_patterns: {len(texts)} texts")
+    logger.info("[START] generate_comprehensive_stance_patterns: %d texts", len(texts))
     
     # 1. Alle Methoden anwenden
     tfidf_patterns = generate_stance_patterns_from_texts(texts)

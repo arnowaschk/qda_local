@@ -1,26 +1,41 @@
 # All comments in English.
-import argparse, json, os, sys, traceback
+# Standard library imports
+import argparse
+import json
 import logging
+import os
+import sys
+import traceback
 from pathlib import Path
 from typing import Dict
+
+# Third-party imports
 import pandas as pd
-import os, re
 from diskcache import FanoutCache
 
-from analyze import generate_policies_with_llm, generate_dynamic_policies
-from dynamics import hybrid_keyword_generation
-
-from util import (
-    TimeoutError, setup_timeout, DirectLogger
+# Local application imports
+from analyze import (
+    generate_policies_with_llm, generate_dynamic_policies, 
+    dynamics_generate_stance_patterns_from_texts, dynamics_generate_comprehensive_stance_patterns,
+    segment_rows, compute_embeddings,
+    tfidf_features, get_cluster_texts, rule_codes, summarize_textrank,
+    build_dynamic_keyword_dict
 )
-from util import create_safe_dirname
+from cache import load_persistent_cache, save_persistent_cache
+from dynamics import hybrid_keyword_generation
+from loaders import load_policies, load_embedder, load_csv_with_fallback
+from reports import generate_reports
+from util import TimeoutError, setup_timeout, DirectLogger, create_safe_dirname
+
 # Global timeout configuration (5 hours = 18000 seconds)
 TIMEOUT_SECONDS = 18000
 
-# Simple direct logging to stderr for immediate output
-import sys
+# Set flags for backward compatibility
+HAS_SPACY = True
+HAS_SENTENCE_TRANSFORMERS = True
+HAS_TRANSFORMERS = True
 
-# Use our direct logger
+# Initialize logging
 logger = DirectLogger(__name__)
 
 # Log the cache directories being used (these are set by environment variables in Dockerfile)
@@ -29,25 +44,12 @@ logger.info(f"  HF_HOME: {os.environ.get('HF_HOME', 'default')}")
 logger.info(f"  SPACY_DATA: {os.environ.get('SPACY_DATA', 'default')}")
 logger.info(f"  TORCH_HOME: {os.environ.get('TORCH_HOME', 'default')}")
 
-import spacy
-from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline as hf_pipeline
-
-# Set flags for backward compatibility
-HAS_SPACY = True
-HAS_SENTENCE_TRANSFORMERS = True
-HAS_TRANSFORMERS = True
-
-
-
 # Initialize DiskCache for persistent storage
 CACHE_DIR = os.environ.get('CACHE_DIR', '/cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
-global CACHE_PATH
 CACHE_PATH = os.path.join(CACHE_DIR, 'nlp_cache.dc')
 
 # Global cache for NLP results with persistence
-global NLP_CACHE
 NLP_CACHE = FanoutCache(
     directory=CACHE_PATH,
     timeout=1,
@@ -55,30 +57,6 @@ NLP_CACHE = FanoutCache(
     shards=64,         # More shards for better concurrency
     eviction_policy='least-recently-used'
 )
-
-from cache import (
-    load_persistent_cache, 
-    save_persistent_cache,
-)
-
-from loaders import (
-    load_policies, load_embedder,
-    load_csv_with_fallback,
-)
-
-from analyze import (
-    segment_rows, _compute_embeddings_impl, compute_embeddings,
-    tfidf_features, get_cluster_texts, label_clusters, rule_codes,
-    split_sentences, summarize_textrank, build_dynamic_keyword_dict
-)
-
-from networks import (
-    analyze_code_cooccurrence, generate_code_network, generate_word_cloud
-)
-
-from reports import generate_structured_report, generate_overall_summary
-from reports import generate_question_report, generate_code_reports
-from reports import generate_reports
 
 def analyze_data(df: pd.DataFrame, output_dir: Path, report_name: str = None, 
                 k_clusters: int = 6, cfg_dir: str = "./config",
@@ -219,23 +197,23 @@ def analyze_data(df: pd.DataFrame, output_dir: Path, report_name: str = None,
                 else:
                     # Purely text-driven stance patterns (no keyword bias)
                     stance_patterns_used = dynamics_generate_stance_patterns_from_texts(texts)
-            except Exception as e:
+            except ValueError as e:
                 logger.warning(f"Could not generate stance patterns: {e}")
     
         # Generate cluster summaries and global summary
         cluster_summaries = {}
         for cid in range(k):
-            cluster_texts = [t for t, l in zip(texts, labels) if l == cid]
+            cluster_texts = [text for text, label in zip(texts, labels) if label == cid]
             try:
                 summary = summarize_textrank(cluster_texts, max_sentences=3)
                 cluster_summaries[cid] = summary
-            except Exception as e:
+            except ValueError as e:
                 logger.warning(f"Failed to generate summary for cluster {cid}: {e}")
                 cluster_summaries[cid] = f"Summary generation failed: {e}"
         
         try:
             global_summary = summarize_textrank(texts, max_sentences=12)
-        except Exception as e:
+        except ValueError as e:
             logger.warning(f"Failed to generate global summary: {e}")
             global_summary = f"Global summary generation failed: {e}"
             
@@ -257,10 +235,10 @@ def analyze_data(df: pd.DataFrame, output_dir: Path, report_name: str = None,
         
         return results
 
-    except Exception as e:
+    except (ValueError, IOError, RuntimeError) as e:
         logger.error(f"Error in analyze_data: {e}")
         logger.error(traceback.format_exc())
-        raise
+        return None
 
 def _build_question_texts(seg: pd.DataFrame) -> Dict[int, str]:
     """Build a mapping of question indices to question texts from a segment DataFrame.
@@ -567,6 +545,6 @@ if __name__ == "__main__":
         # Still try to save cache even on error
         try:
             save_persistent_cache()
-        except:
-            pass
+        except (IOError, RuntimeError) as cache_error:
+            logger.warning(f"Failed to save cache: {cache_error}")
         sys.exit(1)

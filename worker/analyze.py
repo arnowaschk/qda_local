@@ -6,14 +6,10 @@ from util import clean_text
 from util import apply_policies, keyword_hits
 import re
 from collections import Counter
-import logging
 import torch
 import hashlib
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.feature_extraction.text import TfidfTransformer
 from cache import get_cached_result
 import networkx as nx
 from sklearn.cluster import KMeans

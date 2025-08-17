@@ -5,7 +5,6 @@ from util import logger
 import traceback
 import json
 import re
-import traceback
 
 # External analysis/visualization utilities used by report generation
 from networks import (
@@ -236,7 +235,7 @@ def generate_structured_report(
                 total_codes = sum(codebook.values()) if codebook else 0
                 unique_codes = len(codebook) if codebook else 0
                 avg_codes_per_segment = total_codes / total_segments if total_segments > 0 else 0
-                report_txt += f"## Overview\n"
+                report_txt += "## Overview\n"
                 report_txt += f"- **Total Segments Analyzed**: {total_segments:,}\n"
                 report_txt += f"- **Total Code Applications**: {total_codes:,}\n"
                 report_txt += f"- **Unique Codes**: {unique_codes:,}\n"
@@ -693,14 +692,14 @@ def generate_overall_summary(
         top_pairs = sorted(relationships, key=lambda x: -x[2])[:5]
         
         # Generate markdown report
-        report = f"# Qualitative Analysis Summary Report\n\n"
-        report += f"## Overview\n"
+        report = "# Qualitative Analysis Summary Report\n\n"
+        report += "## Overview\n"
         report += f"- **Total Segments Analyzed**: {total_segments:,}\n"
         report += f"- **Total Code Applications**: {total_codes:,}\n"
         report += f"- **Unique Codes**: {unique_codes:,}\n"
         report += f"- **Average Codes per Segment**: {avg_codes_per_segment:.2f}\n\n"
         
-        report += f"## Most Frequent Codes\n"
+        report += "## Most Frequent Codes\n"
         for code, count in top_codes:
             report += f"- **{code}**: {count:,} applications\n"
         report += "\n## Strongest Code Relationships\n"
@@ -799,7 +798,7 @@ def generate_question_report(
         report += f"## Question Text\n{question_text}\n\n"
         
         # Summary section
-        report += f"## 📊 Summary\n"
+        report += "## 📊 Summary\n"
         report += f"- **Total Responses**: {total_segments:,}\n"
         report += f"- **Unique Codes Applied**: {len(code_freq):,}\n"
         
@@ -807,7 +806,7 @@ def generate_question_report(
         if sentiment_stats:
             total = sum(sentiment_stats.values())
             if total > 0:
-                report += f"- **Sentiment Distribution**:\n"
+                report += "- **Sentiment Distribution**:\n"
                 def sentiment_bar(count, total, width=30):
                     filled = '█' * int((count / total) * width) if total > 0 else ''
                     return f"`{filled.ljust(width)}` {count} ({count/total:.1%})"
@@ -817,7 +816,7 @@ def generate_question_report(
                 report += f"  - 😟 Negative: {sentiment_bar(sentiment_stats['negative'], total)}\n"
         
         # Code frequency section
-        report += f"\n## 🔍 Code Frequency\n"
+        report += "\n## 🔍 Code Frequency\n"
         if top_codes:
             max_count = max(count for _, count in top_codes)
             for code, count in top_codes:
@@ -828,7 +827,7 @@ def generate_question_report(
             report += "(No codes available for this question)\n"
         # Add co-occurrence analysis if data is available
         if has_codes and code_cooccurrence and 'pairs' in code_cooccurrence and code_cooccurrence['pairs']:
-            report += f"\n## 🔗 Code Relationships\n"
+            report += "\n## 🔗 Code Relationships\n"
             # Get top co-occurring code pairs for this question
             relationships = []
             for (code1, code2), count in code_cooccurrence["pairs"].items():
@@ -909,7 +908,8 @@ def generate_question_report(
         try:
             from collections import Counter
             from wordcloud import STOPWORDS
-            import string, traceback
+            import string
+            import traceback
             
             # Combine all text for this question
             all_text = ' '.join(str(t) for t in seg['text'] if pd.notna(t))
@@ -936,7 +936,7 @@ def generate_question_report(
                     title=f"Frequent Terms - Question {question_idx}",
                     max_words=100
                 )
-                report += f"\n## 📊 Frequent Terms\n"
+                report += "\n## 📊 Frequent Terms\n"
                 report += f"![Word Cloud]({wc_path.name})\n"
         except Exception as e:
             logger.error(f"Error generating word cloud: {e}")
@@ -961,8 +961,7 @@ def generate_question_report(
                     report += "\n### Code Co-occurrence Matrix\n"
                     report += "(Values indicate the Jaccard similarity between code pairs, from 0 to 1)\n\n"
                     
-                    # Create a matrix of just the codes in this question
-                    matrix = []
+                    # Create a list of codes for this question
                     code_list = sorted(question_codes)
                     
                     # Build the header row
@@ -1168,7 +1167,7 @@ def generate_code_reports(
             
             # Generate markdown report
             report = f"# Code Report: {code}\n\n"
-            report += f"## Usage Statistics\n"
+            report += "## Usage Statistics\n"
             report += f"- **Total Applications**: {len(code_segments):,}\n"
             
             if co_occurring:

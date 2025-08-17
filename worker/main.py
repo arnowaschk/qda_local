@@ -3,7 +3,6 @@ from pydantic import BaseModel
 import subprocess
 import pathlib
 import sys
-import os
 import traceback
 import logging
 import torch
@@ -95,7 +94,7 @@ def run_pipeline_realtime(pipeline_command):
         else:
             error_msg = f"Pipeline failed with exit code {return_code}"
             if output_lines:
-                error_msg += f"\nLast 20 lines of output:\n"
+                error_msg += "\nLast 20 lines of output:\n"
                 error_msg += "\n".join([f"  {line}" for line in output_lines[-20:]])
             logger.error(error_msg)
             return ProcessResponse(ok=False, error_message=error_msg)
