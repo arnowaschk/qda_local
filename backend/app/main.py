@@ -7,11 +7,14 @@ import asyncio
 import traceback
 import sys
 import logging
+from .style import MAIN_STYLE
+from fastapi.responses import HTMLResponse, JSONResponse
+import pathlib
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,95 @@ def get_error_location():
 def health():
     #logger.info("Health check endpoint called")
     return {"status": "ok"}
+
+# --- Minimal Web UI and CSV listing ---
+def _get_data_dir() -> pathlib.Path:
+    return pathlib.Path(os.getenv("DATA_DIR", "/app/data"))
+
+@app.get("/files")
+def list_files():
+    data_dir = _get_data_dir()
+    try:
+        files = [p.name for p in sorted(data_dir.glob("*.csv"))] if data_dir.exists() else []
+        if not files:
+            logger.warning(f"In {data_dir}: No CSV files found")
+        else:
+            logger.info(f"In {data_dir} {len(files)} files found.")
+        return JSONResponse({"files": files})
+    except Exception as e:
+        logger.error(f"In {data_dir}:  Failed listing files: {e}")
+        return JSONResponse(status_code=500, content={"files": [], "error": str(e)})
+
+@app.get("/", response_class=HTMLResponse)
+def root_page():
+    # Inline style copied from web_templ/index.html for consistent look
+    html = """
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <title>QDA Local</title>%s</head>
+      <body>
+        <div class="card">
+          <h1>Analyze CSV</h1>
+          <div class="row">
+            <select id="file"></select>
+            <button id="send" disabled>Send</button>
+          </div>
+          <div class="msg" id="msg" style="font-family: 'Quicksand', 'Quicksand Variable', sans-serif;"></div>
+        </div>
+        <script>
+          const fileSel = document.getElementById('file');
+          const sendBtn = document.getElementById('send');
+          const msg = document.getElementById('msg');
+
+          async function loadFiles() {
+            try {
+              const r = await fetch('/files');
+              const j = await r.json();
+              fileSel.innerHTML = '';
+              (j.files || []).forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name; opt.textContent = name; fileSel.appendChild(opt);
+              });
+              sendBtn.disabled = (fileSel.options.length === 0);
+              if (fileSel.options.length === 0) {
+                msg.textContent = 'No CSV files found in data/';
+              }
+            } catch (e) {
+              msg.className = 'msg err';
+              msg.textContent = 'Failed to load files: ' + e;
+            }
+          }
+
+          async function analyze() {
+            msg.className = 'msg'; msg.textContent = 'Processing...';
+            const name = fileSel.value;
+            const input_path = '/app/data/' + encodeURIComponent(name);
+            const params = new URLSearchParams({ input_path, out_dir: '/app/out/' + encodeURIComponent(name) });
+            try {
+              const r = await fetch('/analyze?' + params.toString(), { method: 'POST' });
+              const j = await r.json();
+              if (j.ok) {
+                msg.className = 'msg ok';
+                msg.textContent = 'OK. Output: ' + (j.out_dir || './out');
+              } else {
+                msg.className = 'msg err';
+                msg.textContent = 'Error: ' + (j.error_message || 'Unknown error');
+              }
+            } catch (e) {
+              msg.className = 'msg err';
+              msg.textContent = 'Request failed: ' + e;
+            }
+          }
+
+          sendBtn.addEventListener('click', analyze);
+          loadFiles();
+        </script>
+      </body>
+    </html>
+    """%(MAIN_STYLE)
+    return HTMLResponse(content=html)
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(input_path: str = Query(...), out_dir: str = Query("./out")):
