@@ -16,13 +16,16 @@ from diskcache import FanoutCache
 # Local application imports
 from analyze import (
     generate_policies_with_llm, generate_dynamic_policies, 
-    dynamics_generate_stance_patterns_from_texts, dynamics_generate_comprehensive_stance_patterns,
     segment_rows, compute_embeddings,
     tfidf_features, get_cluster_texts, rule_codes, summarize_textrank,
     build_dynamic_keyword_dict
 )
 from cache import load_persistent_cache, save_persistent_cache
-from dynamics import hybrid_keyword_generation
+from dynamics import (
+    hybrid_keyword_generation, 
+    generate_comprehensive_stance_patterns as dynamic_generate_comprehensive_stance_patterns, 
+    generate_stance_patterns_from_texts as dynamics_generate_stance_patterns_from_texts
+)
 from loaders import load_policies, load_embedder, load_csv_with_fallback
 from reports import generate_reports
 from util import TimeoutError, setup_timeout, DirectLogger, create_safe_dirname
