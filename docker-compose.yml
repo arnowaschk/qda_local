@@ -2,12 +2,12 @@ services:
   qda_api:
     build:
       context: ./backend
+    environment:
+      - LOG_LEVEL=INFO
     container_name: qda_api
     restart: unless-stopped
     ports:
       - "8009:8000"
-    environment:
-      - LOG_LEVEL=INFO
     volumes:
       - ./data:/app/data
       - ./out:/app/out
@@ -33,6 +33,12 @@ services:
     restart: unless-stopped
     ports:
       - "8001:8001"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
     environment:
       - LOG_LEVEL=INFO
       - HF_HOME=/cache/huggingface
@@ -40,6 +46,9 @@ services:
       - TORCH_HOME=/cache/torch
       - SENTENCE_TRANSFORMERS_HOME=/cache/sentence_transformers
       - SPACY_DATA=/cache/spacy
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
     volumes:
       - ./data:/app/data
       - ./out:/app/out

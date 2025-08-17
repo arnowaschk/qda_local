@@ -41,6 +41,7 @@ RUN mkdir -p \
 
 COPY requirements_torch.txt ./
 RUN pip install --user -r requirements_torch.txt
+ENV TORCH_CUDA_ARCH_LIST="8.0" 
 
 COPY requirements.txt ./
 RUN pip install --user -r requirements.txt
