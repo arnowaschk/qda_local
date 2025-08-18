@@ -23,7 +23,7 @@ from analyze import (
 from cache import load_persistent_cache, save_persistent_cache
 from dynamics import (
     hybrid_keyword_generation, 
-    generate_comprehensive_stance_patterns as dynamic_generate_comprehensive_stance_patterns, 
+    generate_comprehensive_stance_patterns as dynamic_generate_comprehensive_stance_patterns,  # noqa: F401
     generate_stance_patterns_from_texts as dynamics_generate_stance_patterns_from_texts
 )
 from loaders import load_policies, load_embedder, load_csv_with_fallback
@@ -193,7 +193,7 @@ def analyze_data(df: pd.DataFrame, output_dir: Path, report_name: str = None,
                     except Exception:
                         pass
 
-                    stance_patterns_used = dynamics_generate_comprehensive_stance_patterns(
+                    stance_patterns_used = dynamics_generate_comprehensive_stance_patterns(  # noqa: F821
                         texts,
                         base_stance_patterns=base_patterns if base_patterns else None
                     )

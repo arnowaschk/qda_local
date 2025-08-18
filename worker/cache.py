@@ -1,5 +1,6 @@
 from typing import Union, List, Tuple, Any, Optional, Dict
-import hashlib, os
+import hashlib
+import os
 from util import logger
 import traceback
 from util import stance
@@ -85,7 +86,8 @@ def get_cached_result(texts: Union[str, List[str]], function_name: str, func, ba
             logger.info(f"Batch {i//batch_size}: {len(batch_to_compute)} texts to compute")
         # Compute results for texts not in cache
         if batch_to_compute:
-            if progress: logger.info(f"Batch to compute:{batch_to_compute} /Batch")
+            if progress:
+                logger.info(f"Batch to compute:{batch_to_compute} /Batch")
             try:
                 if progress:
                     logger.info(f"Computing results for batch {i//batch_size}")
@@ -144,7 +146,6 @@ def process_texts_in_batch(texts: List[str], function_name: str, func, *args, **
         # First check cache for all texts in batch
         cache_keys = []
         texts_to_process = []
-        text_indices = []
         
         for idx, text in enumerate(batch):
             text_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
@@ -161,7 +162,6 @@ def process_texts_in_batch(texts: List[str], function_name: str, func, *args, **
         # Process texts not in cache
         if texts_to_process:
             # Prepare batch for processing
-            process_indices = [idx for idx, _ in texts_to_process]
             process_texts = [text for _, text in texts_to_process]
             
             # Process batch
@@ -218,8 +218,7 @@ def process_texts_batch(
         - Uses caching to avoid redundant computations
         - Handles memory management for large text collections
     """
-    # Clear any existing NER cache to free up memory
-    #clear_ner_cache()
+    from pipeline import NLP_CACHE
     batch_size_sentiment = 32  # Good for transformer models
     batch_size_stance = 32     # Similar to sentiment
     batch_size_rule_codes = 64 # Lighter processing
