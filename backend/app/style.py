@@ -23,12 +23,13 @@ MAIN_STYLE="""
                         font-size: 16px;
                 }
 
-          body { margin: 0; padding: 2rem; background: transparent; color: #ddd; }
-          .card { max-width: 640px; margin: 0 auto; background: rgba(0,0,0, 0.3); border-radius: 9px; padding: 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
+          body { margin: 0; padding: 2rem; background: transparent; color: rgba(230,230,255,0.8); }
+          .card { max-width: 640px; margin: 0 auto; background: rgba(0,0,0, 0.3); border-radius: 9px; padding: 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.25); }
           h1 { font-weight: 600; font-size: 1.25rem; margin: 0 0 1rem; }
           .row { display: flex; gap: 12px; align-items: center; }
-          select { flex: 1; padding: 10px; border: 1px solid; color: #ddd; border-radius: 8px; background: rgba(255,255,255,0.1); }
-          button { padding: 10px 16px; border: 0; background: rgba(255,255,255,0.2); color: #fff; border-radius: 8px; cursor: pointer; font-weight: 600; }
+          select { flex: 1; padding: 10px; border: 1px solid; color: rgba(230,230,255,0.8); border-radius: 8px; background: rgba(255,255,255,0.1); }
+          select option { background-color: rgba(30,10,80,0.9); color: rgba(200,200,255,0.8); }
+          button { padding: 10px 16px; border: 0; background: rgba(255,255,255,0.2); color: rgba(230,230,255,0.8); border-radius: 8px; cursor: pointer; font-weight: 600; }
           button:disabled { background: #9aa7cc; cursor: not-allowed; }
           .msg { margin-top: 12px; font-size: 0.95rem; }
           .ok { color: #0a7d32; }
