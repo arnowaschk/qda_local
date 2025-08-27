@@ -27,7 +27,7 @@ from dynamics import (
     generate_stance_patterns_from_texts as dynamics_generate_stance_patterns_from_texts
 )
 from loaders import load_policies, load_embedder, load_csv_with_fallback
-from reports import generate_reports
+from reports import generate_reports, llm_summary_report
 from util import TimeoutError, setup_timeout, DirectLogger, create_safe_dirname
 
 # Global timeout configuration (5 hours = 18000 seconds)
@@ -40,6 +40,19 @@ HAS_TRANSFORMERS = True
 
 # Initialize logging
 logger = DirectLogger(__name__)
+
+# Suppress noisy fontTools logs (DEBUG/INFO) inside the pipeline process
+try:
+    for _name in (
+        "fontTools",
+        "fontTools.subset",
+        "fontTools.subset.timer",
+        "fontTools.ttLib",
+        "fontTools.ttLib.ttFont",
+    ):
+        logging.getLogger(_name).setLevel(logging.WARNING)
+except Exception:
+    pass
 
 # Log the cache directories being used (these are set by environment variables in Dockerfile)
 logger.info("Using global cache directories:")
@@ -94,6 +107,10 @@ def analyze_data(df: pd.DataFrame, output_dir: Path, report_name: str = None,
         
         # Segment the data
         seg = segment_rows(df)
+        logger.info(seg)
+        logger.info(seg.columns)
+        all_paragraphs=seg[seg.text_type=="paragraph"]["text"].str.split("\n\n").explode().reset_index(drop=True)
+        all_sentences=seg[seg.text_type=="sentence"]["text"].str.split(".").explode().reset_index(drop=True)
         if len(seg) == 0:
             logger.warning(f"No valid text segments found in {'column ' + report_name if report_name else 'dataset'}")
             return {}
@@ -233,10 +250,11 @@ def analyze_data(df: pd.DataFrame, output_dir: Path, report_name: str = None,
             'vectorizer': vec,
             'embeddings': embeddings,
             'cluster_model': km,
-            'cluster_centers': centers
+            'cluster_centers': centers,
+            'texts_as_used': texts,
         }
         
-        return results
+        return results,all_paragraphs,all_sentences
 
     except (ValueError, IOError, RuntimeError) as e:
         logger.error(f"Error in analyze_data: {e}")
@@ -295,7 +313,8 @@ def run_pipeline(input_path: str, out_dir: str, k_clusters: int = 6, cfg_dir: st
                 no_dynamic_keywords: bool = False,
                 use_fixed_keywords: bool = False,
                 no_dynamic_stances: bool = False,
-                use_fixed_stances: bool = False):
+                use_fixed_stances: bool = False,
+                llm_model: str = None):
     """Pipeline with optional dynamic keyword and stance pattern generation.
     
     Args:
@@ -344,9 +363,11 @@ def run_pipeline(input_path: str, out_dir: str, k_clusters: int = 6, cfg_dir: st
         df = load_csv_with_fallback(input_path)
         logger.info(f"Input data loaded: {df.shape[0]} rows, {df.shape[1]} columns")
         
+
+        texts_df = pd.DataFrame(columns=["texts_as_used","question_texts","paragraphs","sentences","outp"])
         # Analyze full dataset first
         logger.info("Analyzing full dataset...")
-        full_results = analyze_data(
+        full_results,all_paragraphs,all_sentences = analyze_data(
             df=df,
             output_dir=outp,
             k_clusters=k_clusters,
@@ -365,6 +386,15 @@ def run_pipeline(input_path: str, out_dir: str, k_clusters: int = 6, cfg_dir: st
         
         # Generate reports for full dataset
         full_question_texts = _build_question_texts(full_results.get('segment_df'))
+
+        texts_df.loc["full_doc"]=pd.Series({
+            "texts_as_used":full_results.get('texts_as_used', []),
+            "question_texts":full_question_texts,
+            "outp":outp,
+            "paragraphs":all_paragraphs,
+            "sentences":all_sentences
+            })
+
         generate_reports(
             segment_df=full_results['segment_df'],
             output_dir=outp,
@@ -403,20 +433,20 @@ def run_pipeline(input_path: str, out_dir: str, k_clusters: int = 6, cfg_dir: st
                     col_df = df[[col_name]].rename(columns={col_name: 'text'})
                 
                     # Analyze the column
-                    col_results = analyze_data(
+                    col_results, all_paragraphs, all_sentences = analyze_data(
                         df=col_df,
                         output_dir=col_outp,
-                    report_name=col_name,
-                    k_clusters=k_clusters,
-                    cfg_dir=cfg_dir,
-                    use_dynamic_keywords=use_dynamic_keywords,
-                    use_dynamic_stance_patterns=use_dynamic_stance_patterns,
-                    stances_biased_by_keywords=stances_biased_by_keywords,
-                    no_dynamic_policies=no_dynamic_policies,
-                    llm_policies=llm_policies,
-                    no_dynamic_keywords=no_dynamic_keywords,
-                    no_dynamic_stances=no_dynamic_stances
-                )
+                        report_name=col_name,
+                        k_clusters=k_clusters,
+                        cfg_dir=cfg_dir,
+                        use_dynamic_keywords=use_dynamic_keywords,
+                        use_dynamic_stance_patterns=use_dynamic_stance_patterns,
+                        stances_biased_by_keywords=stances_biased_by_keywords,
+                        no_dynamic_policies=no_dynamic_policies,
+                        llm_policies=llm_policies,
+                        no_dynamic_keywords=no_dynamic_keywords,
+                        no_dynamic_stances=no_dynamic_stances
+                    )
                 
                     if not col_results:
                         logger.warning(f"No valid text segments found in column: {col_name}")
@@ -424,6 +454,15 @@ def run_pipeline(input_path: str, out_dir: str, k_clusters: int = 6, cfg_dir: st
                     
                     # Generate reports for this column
                     col_question_texts = _build_question_texts(col_results.get('segment_df'))
+    
+                    texts_df.loc[col_name] = pd.Series({
+                        "texts_as_used": col_results.get('texts_as_used', []),
+                        "question_texts": col_question_texts,
+                        "outp": col_outp,
+                        "paragraphs": all_paragraphs,
+                        "sentences": all_sentences
+                    })
+
                     generate_reports(
                         segment_df=col_results['segment_df'],
                         output_dir=col_outp,
@@ -450,6 +489,8 @@ def run_pipeline(input_path: str, out_dir: str, k_clusters: int = 6, cfg_dir: st
                     continue
         
         logger.info("Pipeline completed successfully")
+        texts_df.to_pickle(outp / "texts_df.pkl")
+        llm_summary_report(texts_df, llm_model=llm_model)
         return outp
         
     except Exception as e:
@@ -499,6 +540,7 @@ if __name__ == "__main__":
                    help="Path to JSON file with base stance patterns")
         ap.add_argument("--no-dynamic-policies", action="store_true", help="Use only policies.yaml, do not generate dynamic policies")
         ap.add_argument("--llm-policies", action="store_true", help="Use local LLM to generate policies dynamically")
+        ap.add_argument("--llm-model", type=str, default=None, help="Model identifier/path for LLM summaries")
         # New flags for controlling static/dynamic sources
         ap.add_argument("--no-dynamic-keywords", action="store_true", help="Use only fixed TECH_KEYWORDS, disable dynamic keywords")
         ap.add_argument("--use-fixed-keywords", action="store_true", help="Use fixed TECH_KEYWORDS in addition to dynamic keywords")
@@ -533,7 +575,8 @@ if __name__ == "__main__":
             no_dynamic_keywords=args.no_dynamic_keywords,
             use_fixed_keywords=args.use_fixed_keywords,
             no_dynamic_stances=args.no_dynamic_stances,
-            use_fixed_stances=args.use_fixed_stances
+            use_fixed_stances=args.use_fixed_stances,
+            llm_model=args.llm_model
         )
         logger.info("Pipeline execution completed successfully")
         

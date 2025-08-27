@@ -1,10 +1,16 @@
 import pandas as pd
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import pathlib
-from util import logger
-import traceback
+from pathlib import Path
 import json
 import re
+import torch
+from weasyprint import HTML
+from jinja2 import Environment, FileSystemLoader
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+from util import logger
+import traceback
+import tempfile
 
 # External analysis/visualization utilities used by report generation
 from networks import (
@@ -292,7 +298,7 @@ def generate_structured_report(
             
             for q_idx, q_text in question_texts.items():
                 try:
-                    logger.info(f"Processing question {q_idx}...")
+                    logger.info(f"Processing question {q_idx} out of {len(question_texts)}...")
                     
                     # Filter segments for this question
                     if 'question_idx' in seg.columns:
@@ -853,10 +859,12 @@ def generate_question_report(
                     
                     if cooccurrence_freq:
                         wc_path = output_dir / f"q{question_idx}_code_relationships_wordcloud.png"
+                        from pipeline import NLP_CACHE  # Import here to avoid circular import
                         generate_word_cloud(
                             word_freq=cooccurrence_freq,
                             output_path=wc_path,
                             title=f"Code Relationships - Question {question_idx}",
+                            nlp_cache=NLP_CACHE,
                             max_words=50
                         )
                         report += f"\n![Code Relationships Word Cloud]({wc_path.name})\n"
@@ -930,10 +938,12 @@ def generate_question_report(
             # Generate word cloud if we have enough words
             if len(word_freq) >= 5:  # At least 5 unique words
                 wc_path = output_dir / f"q{question_idx}_wordcloud.png"
+                from pipeline import NLP_CACHE  # Import here to avoid circular import
                 generate_word_cloud(
                     word_freq=word_freq,
                     output_path=wc_path,
                     title=f"Frequent Terms - Question {question_idx}",
+                    nlp_cache=NLP_CACHE,
                     max_words=100
                 )
                 report += "\n## 📊 Frequent Terms\n"
@@ -1115,7 +1125,7 @@ def generate_code_reports(
     code_cooccurrence: Dict,
     output_dir: pathlib.Path,
     top_n: int = 10,
-) -> None:
+    ) -> None:
     """Generate detailed markdown reports for each code in the codebook.
     
     Creates individual reports for each code containing:
@@ -1193,3 +1203,423 @@ def generate_code_reports(
         logger.error(f"Error generating code reports: {e}")
         logger.error(traceback.format_exc())
 
+class LLMSummarizer:
+    def __init__(self, model_path: str = "Qwen/Qwen2-7B-Instruct-GPTQ-Int8"):
+        """Initialize the LLM summarizer with the specified model."""
+        self.model_path = model_path
+        self.model = None
+        self.tokenizer = None
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Initializing LLM summarizer with device: {self.device}")
+        
+    def load_model(self):
+        """Load the Qwen2 model and tokenizer."""
+        try:
+            logger.info(f"Loading {self.model_path} model...")
+            try:
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_path, 
+                    trust_remote_code=True
+                )
+            except Exception as e:
+                logger.error(f"Failed to load tokenizer for {self.model_path}: {str(e)}")
+                return False
+            
+            # Conditionally use bitsandbytes 8-bit for avemio models
+            is_avemio = str(self.model_path).lower().startswith("avemio/")
+            if is_avemio:
+                try:
+                    from transformers import BitsAndBytesConfig
+                    bnb_config = BitsAndBytesConfig(load_in_8bit=True)
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_path,
+                        device_map="auto",
+                        quantization_config=bnb_config,
+                        trust_remote_code=True,
+                    )
+                    logger.info("Model loaded in 8-bit with bitsandbytes (avemio)")
+                except Exception as e:
+                    logger.warning(f"bitsandbytes 8-bit load of {self.model_path} failed or unavailable ({e}); falling back to default load")
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_path,
+                        device_map="auto",
+                        torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                        trust_remote_code=True,
+                    )
+            else:
+                logger.warning(f"Normal load of {self.model_path}")
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.model_path,
+                    device_map="auto",
+                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                    trust_remote_code=True,
+                )
+            logger.info(f"Model {self.model_path} loaded successfully")
+            return True
+        except Exception as ee:
+            logger.error(f"Failed to load {self.model_path} model: {str(ee)}")
+            return False
+    
+    def generate_summary(self, texts: List[str], max_length: int = 500, language: str = "German", topic="Stimmungen innerhalb von Parteimitgliedern der Partei Volt Deutschland") -> str:
+        """
+        Generate a summary of the given texts using the Qwen2 model.
+        
+        Args:
+            texts: List of text strings to summarize
+            max_length: Maximum length of the summary in characters
+            
+        Returns:
+            Generated summary as a string
+        """
+        max_tokens_from_length=max_length
+        if not self.model or not self.tokenizer:
+            if not self.load_model():
+                return "Error: Failed to load LLM model"
+        
+        try:
+            # Combine texts with an explicit instruction so the LLM summarizes
+            if language.lower() == "german":
+                instruction = f"""
+                [INST]
+Sie sind ein Experte für Qualitative Datenanalyse und Textzusammenfassung mit Spezialisierung auf {topic}.
+Ihre Aufgabe ist es, den folgenden Text zu analysieren und eine umfassende, detaillierte Zusammenfassung auf Deutsch zu erstellen, die:
+1. Alle wichtigen Informationen und Erkenntnisse extrahiert und synthetisiert
+2. Sich bemüht, auch Textteile zu verstehen, die nicht in vollständigen Sätzen formuliert sind
+3. Die ursprüngliche Bedeutung und Nuancen beibehält
+4. Gut strukturiert und verständlich ist und durchgehend in deutscher Sprache verfasst ist
+5. Eine professionelle, aber zugängliche deutsche Sprache mit korrekter Grammatik in vollständigen Sätzen verwendet
+6. Wichtige Details, Beispiele und Datenpunkte bewahrt
+7. Auf maximale Informationsdichte optimiert ist, während die Token-Grenzen eingehalten werden
+8. Das Token-Limit erfolgreich ausschöpft, bis alle relevanten Informationen aus den Texten dargestellt sind
+9. Sich selbst erlaubt, 10% mehr Tokens zu generieren, wenn die Inhaltsvielfalt diesen zusätzlichen Platz erfordert
+
+Konzentrieren Sie sich auf:
+- Hauptargumente und unterstützende Beweise
+- Wichtige Erkenntnisse und Schlussfolgerungen
+- Wichtige Statistiken oder Datenpunkte
+- Bemerkenswerte Muster oder Trends
+- Handlungsempfehlungen oder umsetzbare Erkenntnisse
+
+Schreiben Sie in klarem, präzisem Deutsch und verwenden Sie einen angemessenen akademischen/professionellen Ton.
+Wiederholen Sie nicht die Aufgabe selbst und kommentieren Sie die Aufgabe nicht, sondern geben Sie nur die reine Zusammenfassung wieder.
+Stellen Sie sicher, dass alle Teile Ihrer Antwort auf Deutsch sind.
+Ihre Antwort muss auf korrekte Rechtschreibung und Grammatik überprüft werden. Iterieren Sie bis zur Perfektion. Überprüfen Sie dann noch einmal auf perfektes Deutsch.
+Text:
+"""
+            else:
+                instruction = f"""
+                [INST]
+You are an expert in Qualitative Data Analysis and Text Summarization, specializing in {topic}.
+Your task is to analyze the following text and provide a comprehensive, detailed summary in {language} language that:
+1. Extracts and synthesizes all key information and insights
+2. Tries hard to also understand text parts which are not formulated in full sentences
+3. Maintains the original meaning and nuance
+4. Is well-structured and easy to understand, and throughout in {language} language
+5. Uses professional yet accessible {language} language in correct grammar and full sentences
+6. Preserves important details, examples, and data points
+7. Is optimized for maximum information density while staying within token limits
+8. Is successfully filling the token limit until all relevant information from the texts is represented
+9. Allow itself to generate 10% more tokens if variety of content needs this extra space.
+
+Focus on:
+- Main arguments and supporting evidence
+- Key findings and conclusions
+- Important statistics or data points
+- Notable patterns or trends
+- Any actionable insights or recommendations
+
+Write in clear, concise {language}, using appropriate academic/professional tone.
+Do not repeat the task itself and to not describe the task itself or comment on the task itself, only tell the clean summary.
+Make sure all parts of your answer are in {language} language.
+Your text must be double checked for correct spelling and grammar. Iterate until perfection. Then double check again for perfect {language} language.
+
+Text:
+"""
+            combined_text = instruction + "\n\n".join([t for t in texts if isinstance(t, str) and t.strip()]) + " [/INST] "
+            if not combined_text.strip():
+                return "No valid text to summarize"
+                
+            # Truncate to avoid context window issues
+            max_tokens = 15000  # Conservative estimate
+            # Prefer Qwen chat template if available for better instruction following
+            input_ids = None
+            attention_mask = None
+            if hasattr(self.tokenizer, "apply_chat_template"):
+                try:
+                    system_message = (
+                        """Du bist ein prägnanter Zusammenfasser der direkt auf Deutsch antwortet, und schreibst immer vollständige Sätze auf Deutsch.
+                        Geben Sie nur die endgültige Zusammenfassung aus, ohne Erklärungen oder Metakommentare.
+                        Verwenden Sie die gesamte verfügbare Token-Anzahl für die inhaltliche Zusammenfassung. 
+                        Es dürfen niemals Teile der Antwort in einer anderen
+                        Sprache als Deutsch sein, außer bei wörtlichen Zitaten."""
+                        if language.lower() == "german"
+                        else f"""You are a concise summarizer who responds directly in {language} and always writes full {language} language sentences.
+                        Only output the final summary, with no explanations or meta-commentary.
+                        Use the full available token allowance for substantive content.
+                        You never allow for parts of the answer being in a language
+                        different from {language} language except for verbatim quotation."""
+                    )
+                    messages = [
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": combined_text},
+                    ]
+                    chat_inputs = self.tokenizer.apply_chat_template(
+                        messages,
+                        add_generation_prompt=True,
+                        return_tensors="pt",
+                        truncation=True,
+                        max_length=max_tokens,
+                    )
+                    # Some tokenizers return a Tensor directly, others return input dict
+                    if isinstance(chat_inputs, torch.Tensor):
+                        input_ids = chat_inputs
+                    else:
+                        input_ids = chat_inputs.get("input_ids")
+                        attention_mask = chat_inputs.get("attention_mask")
+                except Exception:
+                    # Fallback to plain encoding if chat template fails
+                    pass
+            if input_ids is None:
+                enc = self.tokenizer(
+                    combined_text,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=max_tokens,
+                    padding=True,
+                )
+                input_ids = enc.input_ids
+                attention_mask = enc.attention_mask
+            logger.info(f"Input IDs shape: {input_ids.shape}")
+            # Configure generation parameters
+            generation_config = GenerationConfig(
+                max_new_tokens=max(25, max_tokens_from_length),
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9,
+                top_k=50,
+                repetition_penalty=1.1,
+                no_repeat_ngram_size=3,
+                pad_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                num_beams=1,
+                return_full_text=False,
+                skip_special_tokens=True,
+                num_return_sequences=1
+            )
+            if attention_mask is None:
+                logger.info("Attention mask is None")
+            # Generate summary
+            logger.info(f"Generating up to {generation_config.max_new_tokens} Tokens...")
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    input_ids=input_ids.to(self.device),
+                    attention_mask=(attention_mask.to(self.device) if attention_mask is not None else None),
+                    generation_config=generation_config
+                )
+            
+            # Only return the newly generated continuation (exclude the prompt)
+            logger.info(f"Input IDs shape: {input_ids.shape}")
+            logger.info(f"Outputs shape: {outputs.shape}")
+            prompt_len = input_ids.shape[1]
+            logger.info(f"Prompt length: {prompt_len}")
+            gen_ids = outputs[0, prompt_len:]
+            logger.info(f"Generated IDs shape: {gen_ids.shape}")
+            summary = self.tokenizer.decode(gen_ids, skip_special_tokens=True)
+            logger.info(f"Summary: {summary}")
+            logger.info(f"Summary length: {len(summary)}")
+            logger.info(f"End of combined_text: {combined_text[-100:]}")
+            return summary  # Return only the new generation, no clipping
+            
+        except Exception as e:
+            logger.error(f"Error generating summary: {str(e)}")
+            logger.error(traceback.format_exc())
+            return f"Error generating summary: {str(e)}"
+
+def _generate_html_report(summary_data: dict, output_dir: Path, filename: str):
+    """Generate HTML and PDF reports from summary data.
+    
+    Args:
+        summary_data: Dictionary containing summary data
+        output_dir: Directory to save the reports
+        filename: Base filename (without extension)
+    """
+    try:
+        # Create a temporary directory for Jinja2 templates
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_dir = Path(temp_dir)
+            # Create a simple template
+            template_content = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>{{ title }}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }
+                    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+                    .summary { background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 15px 0; }
+                    .metadata { color: #7f8c8d; font-size: 0.9em; margin-bottom: 20px; }
+                </style>
+            </head>
+            <body>
+                <h1>{{ title }}</h1>
+                <div class="metadata">
+                    Generated on: {{ timestamp }}
+                </div>
+                
+                {% if 'paragraph_summary' in data %}
+                <h2>Paragraph Summary</h2>
+                <div class="summary">
+                    {{ data.paragraph_summary | replace('\n', '<br>') | safe }}
+                </div>
+                {% endif %}
+                
+                {% if 'sentence_summary' in data %}
+                <h2>Sentence Summary</h2>
+                <div class="summary">
+                    {{ data.sentence_summary | replace('\n', '<br>') | safe }}
+                </div>
+                {% endif %}
+
+                {% if 'final_summary' in data %}
+                <h2>Final Summary</h2>
+                <div class="summary">
+                    {{ data.final_summary | replace('\n', '<br>') | safe }}
+                </div>
+                {% endif %}
+            </body>
+            </html>
+            """
+            
+            # Write template to a temporary file
+            template_path = temp_dir / 'report_template.html'
+            template_path.write_text(template_content)
+            
+            # Set up Jinja2 environment
+            env = Environment(loader=FileSystemLoader(temp_dir))
+            template = env.get_template('report_template.html')
+            
+            # Render the template with data
+            from datetime import datetime
+            html_content = template.render(
+                title=f"Summary Report - {filename}",
+                timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                data=summary_data
+            )
+            
+            # Save HTML
+            html_path = output_dir / f"{filename}.html"
+            html_path.write_text(html_content)
+            
+            # Generate PDF
+            pdf_path = output_dir / f"{filename}.pdf"
+            HTML(string=html_content).write_pdf(pdf_path)
+            
+            logger.info(f"Generated reports: {html_path}, {pdf_path}")
+            
+    except Exception as e:
+        logger.error(f"Error generating reports: {str(e)}")
+        logger.error(traceback.format_exc())
+
+def llm_summary_report(texts_df: pd.DataFrame, llm_model: str = None):
+    """
+    Generate LLM-based summaries for paragraphs and sentences in the input DataFrame.
+    
+    Args:
+        texts_df: DataFrame containing columns 'paragraphs', 'sentences', and 'outp'
+    """
+    # Initialize the summarizer
+    summarizer = LLMSummarizer(model_path=llm_model or "Qwen/Qwen2-7B-Instruct-GPTQ-Int8")
+    
+    # Add new columns for summaries if they don't exist
+    if 'paragraph_summary' not in texts_df.columns:
+        texts_df['paragraph_summary'] = None
+    if 'sentence_summary' not in texts_df.columns:
+        texts_df['sentence_summary'] = None
+    if 'final_summary' not in texts_df.columns:
+        texts_df['final_summary'] = None
+    
+    # Process each row in the DataFrame
+    for idx, row in texts_df.iterrows(): #tqdm(texts_df.iterrows(), total=len(texts_df), desc="Generating summaries"):
+        try:
+            output_dir = Path(row['outp'])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Determine max length based on whether this is the full document
+            is_full_doc = idx == 'full_doc'
+            max_length = 6000 if is_full_doc else 2000
+            # Get the integer position of the index in the DataFrame
+            idx_pos = texts_df.index.get_loc(idx)
+            idx_n_str = f"{idx_pos:03d}"
+            summary_data = {"paragraph_summary": None, "sentence_summary": None}
+            
+            # Generate paragraph summary if not already done
+            if pd.isna(row.get('paragraph_summary')) and 'paragraphs' in row and not row['paragraphs'].empty:
+                logger.info(f"Generating paragraph summary for {idx}...")
+                texts = [str(t) for t in row['paragraphs'].tolist() if pd.notna(t) and str(t).strip()]
+                summary = summarizer.generate_summary(texts, max_length)
+                texts_df.at[idx, 'paragraph_summary'] = summary
+                
+                # Save to file and generate reports
+                with open(output_dir / f"{idx_n_str}_{idx[:30]}_paragraph_summary.txt", 'w', encoding='utf-8') as f:
+                    f.write(summary)
+            
+            # Generate sentence summary if not already done
+            if pd.isna(row.get('sentence_summary')) and 'sentences' in row and not row['sentences'].empty:
+                logger.info(f"Generating sentence summary for {idx}...")
+                texts = [str(t) for t in row['sentences'].tolist() if pd.notna(t) and str(t).strip()]
+                summary = summarizer.generate_summary(texts, max_length)
+                texts_df.at[idx, 'sentence_summary'] = summary
+                
+                # Save to file and update reports
+                with open(output_dir / f"{idx_n_str}_{idx[:30]}_sentence_summary.txt", 'w', encoding='utf-8') as f:
+                    f.write(summary)
+                
+                # Generate/update HTML and PDF reports if paragraph summary exists
+                if 'paragraph_summary' in texts_df.columns and not pd.isna(texts_df.at[idx, 'paragraph_summary']):
+                    summary_data['paragraph_summary']=texts_df.at[idx, 'paragraph_summary']
+                if 'sentence_summary' in texts_df.columns and not pd.isna(texts_df.at[idx, 'sentence_summary']):
+                    summary_data['sentence_summary']=texts_df.at[idx, 'sentence_summary']
+            _generate_html_report(
+                        summary_data=summary_data,
+                        output_dir=output_dir,
+                        filename=f"{idx_n_str}_{idx[:30]}_summary"
+                    )
+                    
+            if pd.isna(row.get('final_summary')) and 'sentence_summary' in row and texts_df.loc[idx,'sentence_summary'] \
+                and 'paragraph_summary' in row and texts_df.loc[idx,'paragraph_summary']:
+                logger.info(f"Generating final summary for {idx}...")
+                texts = [str(t) for t in [texts_df.loc[idx,'paragraph_summary'], texts_df.loc[idx,'sentence_summary']] if pd.notna(t) and str(t).strip()]
+                summary = summarizer.generate_summary(texts, int(max_length*1.6))
+                texts_df.at[idx, 'final_summary'] = summary
+                
+                # Save to file and update reports
+                with open(output_dir / f"{idx_n_str}_{idx[:30]}_final_summary.txt", 'w', encoding='utf-8') as f:
+                    f.write(summary)
+                
+                # Generate/update HTML and PDF reports if paragraph summary exists
+                if 'paragraph_summary' in texts_df.columns and not pd.isna(texts_df.at[idx, 'paragraph_summary']):
+                    summary_data['paragraph_summary']=texts_df.at[idx, 'paragraph_summary']
+                if 'sentence_summary' in texts_df.columns and not pd.isna(texts_df.at[idx, 'sentence_summary']):
+                    summary_data['sentence_summary']=texts_df.at[idx, 'sentence_summary']
+                if 'final_summary' in texts_df.columns and not pd.isna(texts_df.at[idx, 'final_summary']):
+                    summary_data['final_summary']=texts_df.at[idx, 'final_summary']
+            _generate_html_report(
+                        summary_data=summary_data,
+                        output_dir=output_dir,
+                        filename=f"{idx_n_str}_{idx[:30]}_summary"
+                    )
+                    
+        except Exception as e:
+            logger.error(f"Error processing row {idx}: {str(e)}")
+            logger.error(traceback.format_exc())
+    
+    # Save the updated DataFrame
+    try:
+        output_path = Path(texts_df['outp'].iloc[0]) / "summaries.csv"
+        texts_df.to_csv(output_path, index_label='index')
+        logger.info(f"Saved summaries to {output_path}")
+    except Exception as e:
+        logger.error(f"Failed to save summaries: {str(e)}")
+    
+    return texts_df

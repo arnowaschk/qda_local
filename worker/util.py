@@ -1,6 +1,10 @@
 # All comments in English.
-import datetime, sys, re
-import logging, signal
+import datetime
+import chardet
+import sys
+import re
+import logging
+import signal
 from typing import List, Dict
 
 # Configure logging
@@ -142,6 +146,7 @@ def timeout_handler(signum, frame):
     Raises:
         TimeoutError: When the timeout is reached
     """
+    from pipeline import TIMEOUT_SECONDS
     raise TimeoutError(f"Pipeline timed out after {TIMEOUT_SECONDS} seconds ({TIMEOUT_SECONDS/3600:.1f} hours)")
 
 def setup_timeout():
@@ -315,7 +320,6 @@ def clean_text(text: str, lang: str = 'de') -> str:
             r'\bz\.T\.\s*': 'zum Teil ',
             r'\bi\.d\.R\.\s*': 'in der Regel ',
             r'\bz\.Z\.\s*': 'zur Zeit ',
-            r'\bbzw\.\s*': 'beziehungsweise ',
             r'\bMrd\.\s*': 'Milliarden ',
             r'\bMio\.\s*': 'Millionen ',
             r'\bS\.\s*': 'Seite ',

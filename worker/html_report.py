@@ -400,7 +400,6 @@ def generate_policies_html(
         if not name:
             continue
         all_policy_names.add(name)
-        is_dynamic = False
         is_used = name in used_policies
         prefix = '<span class="minus">-</span>' if not is_used else ''
         html_parts.append(f'<li>{prefix}{name}</li>')
@@ -410,7 +409,6 @@ def generate_policies_html(
         if not name or name in all_policy_names:
             continue
         all_policy_names.add(name)
-        is_dynamic = True
         is_used = name in used_policies
         prefix = '<span class="minus">-</span>' if not is_used else ''
         html_parts.append(f'<li>{prefix}{name}<span class="asterisk">*</span></li>')
@@ -421,7 +419,6 @@ def generate_policies_html(
     # Static keywords
     for cat, val in (keywords.get("Base_Keywords", {}).get("keywords", {}) or {}).items():
         for kw in val:
-            is_dynamic = False
             is_used = kw in used_keywords
             prefix = '<span class="minus">-</span>' if not is_used else ''
             html_parts.append(f'<li>{prefix}{kw}</li>')
@@ -446,7 +443,6 @@ def generate_policies_html(
     # --- Stances Section ---
     html_parts.append('<div class="section"><h2>Stances</h2><ul>')
     for stance_name, patterns in (stance_patterns or {}).items():
-        is_dynamic = True  # All stance patterns here are dynamic if passed as such
         is_used = stance_name in used_stances
         prefix = '<span class="minus">-</span>' if not is_used else ''
         html_parts.append(f'<li>{prefix}{stance_name}<span class="asterisk">*</span></li>')
