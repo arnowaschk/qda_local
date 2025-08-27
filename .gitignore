@@ -9,3 +9,4 @@ cache
 *.swp
 uv.lock
 .vscode/settings.json
+worker/logs
