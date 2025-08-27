@@ -49,18 +49,29 @@ RUN pip install --user -r requirements.txt
 # Download spaCy model
 RUN python -c "import spacy; spacy.cli.download('de_core_news_lg')"
 
-COPY requirements_new.txt ./
-RUN pip install --user -r requirements_new.txt
-
+    # WeasyPrint dependencies for Debian Trixie
+RUN apt-get update && apt-get install -y \
+    libcairo2-dev \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-xlib-2.0-0 \
+    libffi-dev \
+    shared-mime-info \
+    && rm -rf /var/lib/apt/lists/*
 # Copy application code
 #COPY  *.py /app/ # this is done as mount in docker compose
 
+COPY requirements_new.txt ./
+RUN pip install --user -r requirements_new.txt
+RUN pip uninstall -y auto-gptq
+RUN pip install --no-cache-dir --extra-index-url https://huggingface.github.io/auto-gptq-package-index/ auto-gptq==0.7.1
 # Expose the port the app runs on
 EXPOSE 8001
 
 # Set Python to run in unbuffered mode and ensure proper signal handling
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONFAULTHANDLER=1
+    PYTHONFAULTHANDLER=1 \
+    FONTTOOLS_LOGLEVEL=WARNING
 
 # Use a shell form of CMD to ensure signals are properly handled
 # Using python -u to ensure unbuffered output

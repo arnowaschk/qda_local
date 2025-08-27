@@ -1,3 +1,8 @@
 wordcloud
 chardet
 diskcache
+tqdm
+weasyprint
+jinja2
+protobuf
+bitsandbytes
