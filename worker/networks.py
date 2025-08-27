@@ -1,13 +1,12 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import pathlib
 import numpy as np
 from collections import defaultdict
 from itertools import combinations
 from util import logger
-import matplotlib.pyplot as plt
-from wordcloud import WordCloud
 import traceback
-import random, math
+import math
+
 
 
 def analyze_code_cooccurrence(code_lists: List[List[str]]) -> Dict:
@@ -219,6 +218,35 @@ def generate_code_network(
         logger.error(f"Failed to generate code network: {e}")
         logger.error(traceback.format_exc())
 
+def _get_wordcloud_cache_key(word_freq: Dict[str, float], output_path: pathlib.Path, **kwargs) -> str:
+    """Generate a cache key for wordcloud generation.
+    
+    Args:
+        word_freq: Dictionary of word frequencies
+        output_path: Output path for the wordcloud image
+        **kwargs: Additional parameters that affect wordcloud generation
+        
+    Returns:
+        str: A unique cache key for the NLP_CACHE
+    """
+    import json
+    import hashlib
+    # Create a stable string representation of the parameters
+    params = {
+        'word_freq': {k: float(v) for k, v in sorted(word_freq.items())},
+        'output_path': str(output_path),
+        'title': kwargs.get('title', ''),
+        'max_words': kwargs.get('max_words', 200),
+        'width': kwargs.get('width', 2480),
+        'height': kwargs.get('height', 3508),
+        'background_color': kwargs.get('background_color', 'white'),
+        'colormap': kwargs.get('colormap', 'viridis')
+    }
+    
+    # Create a hash of the parameters
+    param_str = json.dumps(params, sort_keys=True)
+    return f"wordcloud:{hashlib.md5(param_str.encode('utf-8')).hexdigest()}"
+
 def generate_word_cloud(
     word_freq: Dict[str, float], 
     output_path: pathlib.Path, 
@@ -228,7 +256,9 @@ def generate_word_cloud(
     height: int = 3508,  # A4 at 300dpi (11.69in * 300dpi)
     background_color: str = "white",
     colormap: str = "viridis",
-    codebook: Optional[Dict[str, Dict]] = None
+    codebook: Optional[Dict[str, Dict]] = None,
+    cache_dir: Optional[pathlib.Path] = None,
+    nlp_cache: Any = None
 ) -> None:
     """Generate a visually appealing word cloud from word frequency data.
     
@@ -254,6 +284,8 @@ def generate_word_cloud(
                     'code1': {'display_name': 'First Code', 'color': '#ff0000'},
                     'code2': {'display_name': 'Second Code'}
                 }
+        cache_dir: Optional directory to use for caching wordclouds. If not provided,
+                  a default cache directory will be used.
                 
     Returns:
         None: The word cloud is saved to the specified output path as a PNG file.
@@ -285,13 +317,35 @@ def generate_word_cloud(
         - Logs progress and errors using the module's logger
     """
     try:
-        if not word_freq:
-            logger.warning("No word frequencies provided for word cloud")
+        import matplotlib.pyplot as plt
+        from wordcloud import WordCloud
+        import random
+        
+        # Generate cache key
+        cache_key = _get_wordcloud_cache_key(
+            word_freq,
+            output_path=output_path,
+            title=title,
+            max_words=max_words,
+            width=width,
+            height=height,
+            background_color=background_color,
+            colormap=colormap,
+            codebook=codebook is not None
+        )
+        
+        # Check cache first
+        if nlp_cache and cache_key in nlp_cache:
+            logger.info(f"Using cached wordcloud from NLP_CACHE with key: {cache_key}")
             return
-            
+        
+        # Create output directory if it doesn't exist
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
         # Create a color function based on the colormap
         cmap = plt.get_cmap(colormap)
-        color_func = lambda *args, **kwargs: tuple(int(x * 255) for x in cmap(random.random())[:3])
+        def color_func(*args, **kwargs):
+            return tuple(int(x * 255) for x in cmap(random.random())[:3])
         
         # Create and generate the word cloud
         wc = WordCloud(
@@ -338,9 +392,24 @@ def generate_word_cloud(
         plt.savefig(output_path, dpi=300, bbox_inches='tight', pad_inches=0.5)
         plt.close()
         
+        # Save the word cloud to file
+        wc.to_file(str(output_path))
         logger.info(f"Word cloud saved to {output_path}")
         
+        # Cache the result if nlp_cache is provided and has set method
+        if nlp_cache is not None and hasattr(nlp_cache, 'set'):
+            try:
+                nlp_cache.set(cache_key, True, expire=864000)  # Cache for ten days
+                logger.debug(f"Cached wordcloud with key: {cache_key}")
+            except Exception as e:
+                logger.warning(f"Warning: Could not cache wordcloud: {e}")
+        else:
+            logger.warning("No nlp_cache provided, skipping caching")
+            
     except Exception as e:
         logger.error(f"Error generating word cloud: {e}")
         logger.error(traceback.format_exc())
-
+        raise
+    finally:
+        # FanoutCache handles syncing automatically, no need to call sync()
+        pass
