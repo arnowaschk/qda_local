@@ -15,6 +15,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress noisy INFO logs from fontTools (used by WeasyPrint)
+try:
+    logging.getLogger("fontTools").setLevel(logging.WARNING)
+    logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
+    logging.getLogger("fontTools.ttLib").setLevel(logging.WARNING)
+except Exception:
+    pass
+
 # Log CUDA information
 logger.info("\n=== CUDA Information ===")
 logger.info(f"PyTorch version: {torch.__version__}")
@@ -114,7 +122,7 @@ def health():
     return {"status": "ok"}
 
 @app.post("/process", response_model=ProcessResponse)
-def process(input_path: str = Query(...), out_dir: str = Query(...)):
+def process(input_path: str = Query(...), out_dir: str = Query(...), llm_model: str = Query(None)):
     """Process input file through the pipeline and save output to specified directory.
     
     Args:
@@ -146,6 +154,8 @@ def process(input_path: str = Query(...), out_dir: str = Query(...)):
             "--input", str(ip),
             "--out", str(od)
         ]
+        if llm_model:
+            pipeline_command.extend(["--llm-model", llm_model])
         logger.info(f"Executing: {' '.join(pipeline_command)}")
         
         # Run the pipeline

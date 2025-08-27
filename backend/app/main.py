@@ -18,6 +18,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress noisy INFO logs from fontTools (used indirectly by WeasyPrint)
+try:
+    logging.getLogger("fontTools").setLevel(logging.WARNING)
+    logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
+    logging.getLogger("fontTools.ttLib").setLevel(logging.WARNING)
+except Exception:
+    pass
+
 app = FastAPI(title="QDA Local API")
 
 class AnalyzeResponse(BaseModel):
@@ -74,12 +82,21 @@ def root_page():
           <h1>Analyze CSV</h1>
           <div class="row">
             <select id="file"></select>
+            <select id="model">
+              <option value="Qwen/Qwen2-7B-Instruct-GPTQ-Int8">Qwen2-7B-Instruct-GPTQ-Int8</option>
+              <option value="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8">Qwen2.5-7B-Instruct-GPTQ-Int8</option>
+              <option value="Qwen/Qwen3-4B-Instruct-2507">Qwen3-4B-Instruct-2507</option>
+              <option value="Qwen/Qwen3-4B-Thinking-2507">Qwen3-4B-Thinking-2507</option>
+              <option value="avemio/German-RAG-MISTRAL-7B-v3.0-CPT-HESSIAN-AI">German-RAG-MISTRAL-7B v3.0</option>
+              <option value="TheBloke/DiscoLM_German_7b_v1-GPTQ">DiscoLM German 7B v1</option>
+            </select>
             <button id="send" disabled>Send</button>
           </div>
           <div class="msg" id="msg" style="font-family: 'Quicksand', 'Quicksand Variable', sans-serif;"></div>
         </div>
         <script>
           const fileSel = document.getElementById('file');
+          const modelSel = document.getElementById('model');
           const sendBtn = document.getElementById('send');
           const msg = document.getElementById('msg');
 
@@ -106,7 +123,13 @@ def root_page():
             msg.className = 'msg'; msg.textContent = 'Processing...';
             const name = fileSel.value;
             const input_path = '/app/data/' + encodeURIComponent(name);
-            const params = new URLSearchParams({ input_path, out_dir: '/app/out/' + encodeURIComponent(name) });
+            const llm_model = modelSel.value;
+            // Include model as sanitized subdirectory in output path
+            const safeModel = llm_model ? llm_model.replaceAll('/', '_') : 'default';
+            const out_base = '/app/out/' + encodeURIComponent(name);
+            const out_dir = out_base + '/' + safeModel;
+            const params = new URLSearchParams({ input_path, out_dir });
+            if (llm_model) { params.append('llm_model', llm_model); }
             try {
               const r = await fetch('/analyze?' + params.toString(), { method: 'POST' });
               const j = await r.json();
@@ -132,8 +155,8 @@ def root_page():
     return HTMLResponse(content=html)
 
 @app.post("/analyze", response_model=AnalyzeResponse)
-async def analyze(input_path: str = Query(...), out_dir: str = Query("./out")):
-    logger.info(f"Starting analysis request - input_path: {input_path}, out_dir: {out_dir}")
+async def analyze(input_path: str = Query(...), out_dir: str = Query("./out"), llm_model: str = Query(None)):
+    logger.info(f"Starting analysis request - input_path: {input_path}, out_dir: {out_dir}, llm_model: {llm_model}")
     
     ip = pathlib.Path(input_path)
     od = pathlib.Path(out_dir)
@@ -160,12 +183,15 @@ async def analyze(input_path: str = Query(...), out_dir: str = Query("./out")):
         try:
             async with httpx.AsyncClient(timeout=18000.0) as client:
                 logger.info("Sending HTTP request to worker")
+                params = {
+                    "input_path": str(ip),
+                    "out_dir": str(od)
+                }
+                if llm_model:
+                    params["llm_model"] = llm_model
                 response = await client.post(
                     f"{worker_url}/process",
-                    params={
-                        "input_path": str(ip),
-                        "out_dir": str(od)
-                    }
+                    params=params
                 )
                 
                 logger.info(f"Worker HTTP response received - status: {response.status_code}")
@@ -195,6 +221,8 @@ async def analyze(input_path: str = Query(...), out_dir: str = Query("./out")):
                 "docker", "exec", "qda_worker", "python", "-m", "pipeline", 
                 "--input", str(ip), "--out", str(od)
             ]
+            if llm_model:
+                worker_command.extend(["--llm-model", llm_model])
             
             logger.info(f"Executing docker exec command: {' '.join(worker_command)}")
             

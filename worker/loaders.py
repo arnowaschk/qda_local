@@ -1,9 +1,9 @@
-import pathlib, os, yaml, sys
+import pathlib
+import os
+import yaml
+import sys
 import traceback
 from util import logger
-from dynamics import (
-    GERMAN_STOPWORDS
-)
 import spacy
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline as hf_pipeline
 from sentence_transformers import SentenceTransformer
@@ -13,11 +13,6 @@ import pandas as pd
 from typing import Optional
 from cache import (
     load_persistent_cache,
-    save_persistent_cache,
-    get_cached_result,
-    process_texts_in_batch,
-    process_texts_batch,
-    clear_ner_cache,
 )
 
 def load_policies(cfg_dir: pathlib.Path) -> dict:
