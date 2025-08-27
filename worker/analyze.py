@@ -8,11 +8,13 @@ import re
 from collections import Counter
 import torch
 import hashlib
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 from cache import get_cached_result
 import networkx as nx
 from sklearn.cluster import KMeans
+from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import normalize
+import scipy.sparse as sp
 
 from dynamics import (  
     extract_document_themes as _extract_document_themes,
@@ -474,22 +476,37 @@ def summarize_textrank(texts: List[str], max_sentences: int = 3) -> str:
     
     # Filter out empty or very short sentences
     sentences = [s for s in sentences if len(s.strip()) > 10]
+    # Cap to avoid O(n^2) blow-ups
+    MAX_SENTENCES = 6000 # TODO: make this configurable or bigger
+    if len(sentences) > MAX_SENTENCES:
+        logger.warning(f"Capping sentences from {len(sentences)} to {MAX_SENTENCES} for memory safety")
+        sentences = sentences[:MAX_SENTENCES]
     if not sentences:
         logger.warning("No valid sentences found for summarization after filtering")
         return ""
     
     try:
-        vec = TfidfVectorizer(max_features=5000, ngram_range=(1,2), min_df=1, stop_words=GERMAN_STOPWORDS)
+        vec = TfidfVectorizer(max_features=5000, ngram_range=(1,2), min_df=1, stop_words=GERMAN_STOPWORDS, dtype=np.float32)
         X = vec.fit_transform(sentences)
         
         # Check if we have a valid vocabulary
         if X.shape[1] == 0:
             logger.warning("Empty vocabulary after TF-IDF, returning first few sentences")
             return " ".join(sentences[:max_sentences])
-        
-        sim = cosine_similarity(X)
-        np.fill_diagonal(sim, 0.0)
-        g = nx.from_numpy_array(sim)
+        # Normalize; cosine distance becomes 1 - dot
+        X = normalize(X, norm="l2", copy=False)
+        n = X.shape[0]
+        k = min(20, max(2, n - 1))
+        nn = NearestNeighbors(metric="cosine", n_neighbors=k)
+        nn.fit(X)
+        knn = nn.kneighbors_graph(X, mode="distance")  # CSR distances
+        # Convert distances to similarities and symmetrize
+        sim_data = 1.0 - knn.data
+        sim_data[sim_data < 0] = 0.0
+        W = sp.csr_matrix((sim_data, knn.indices, knn.indptr), shape=knn.shape)
+        W = W.maximum(W.T)
+        g = nx.from_scipy_sparse_array(W)
+        # Use standard PageRank which automatically handles sparse matrices
         scores = nx.pagerank(g, max_iter=200, tol=1.0e-6)
         ranked = sorted(range(len(sentences)), key=lambda i: -scores.get(i,0.0))
         pick = sorted(ranked[:max_sentences])
